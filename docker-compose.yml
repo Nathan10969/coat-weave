@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: coating_kg_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-coating_kg}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - coating_kg_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-coating_kg}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  coating_kg_pgdata:

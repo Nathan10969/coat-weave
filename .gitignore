@@ -1,0 +1,45 @@
+# env / secrets
+.env
+*.env.local
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+
+# generated data / outputs
+data/
+output/
+*.log
+*.jsonl.lock
+
+# generated docs / archives / scratch files
+docs/*.pdf
+docs/*.html
+*.zip
+src/coating_kg/pipeline.zip
+scripts/_tmp_*.py
+
+# DB dumps
+*.sql.gz
+*.dump
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
