@@ -12,8 +12,8 @@
 布局：option A (sub_type 作子列，多值 cell 用 `; ` 分隔)。
 
 跑:
-    cd G:\\coating_1\\coating_kg
-    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\build_coatings_csv.py
+    cd coat-weave
+    & "python" scripts\\build_coatings_csv.py
 """
 from __future__ import annotations
 

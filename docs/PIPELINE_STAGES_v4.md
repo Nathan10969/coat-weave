@@ -556,7 +556,7 @@ vllm serve ~/models/Qwen3.6-27B-AWQ-INT4 \
 ### 输入
 
 ```
-G:\coating_1\20260502062406317\pdf\WO2026052438A1.pdf
+data/pdf/WO2026052438A1.pdf
 ```
 
 42 页 PDF，含：

@@ -1,108 +1,123 @@
-# coating_kg
+<p align="center"><img src="docs/assets/hero.svg" alt="CoatWeave: weaving coating patent evidence into knowledge graphs" width="100%" /></p>
 
-**Coating Patent Knowledge Graph — V1.2.2 implementation**
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14b8a6" alt="MIT license" /></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3b82f6" alt="Python 3.10 or newer" />
+  <img src="https://img.shields.io/badge/PostgreSQL-pgvector-334155" alt="PostgreSQL with pgvector" />
+  <img src="https://img.shields.io/badge/status-research%20prototype-64748b" alt="Research prototype" />
+</p>
 
-Vertical: 建筑外墙涂料 (architectural exterior coating).
-Demo dataset: 348 BASF PCT patents under `G:\coating_1\20260502062406317\pdf\`.
+# CoatWeave
 
-This repo implements the V1.2.2 design — an evidence-grounded hyperedge schema where every fact extracted from a coating patent's Examples section is stored as a multi-slot `FactHyperedge` (9 required + 10 optional + 1 marker fields), connected to canonical `Material / Application / Substrate / Property / Process / TestMethod / Evidence / Patent` nodes through a typed alias subgraph.
+**Evidence-grounded knowledge graphs for coating patents.**
 
-Design source of truth: `G:\coating_1\v1.2_design\` (markdown 01-08), summarised in `G:\coating_1\Coating项目V1.2.2_完整设计稿.docx`.
+CoatWeave turns patent figures, tables and surrounding context into structured, traceable coating facts. Instead of reducing every result to a loose subject–relation–object triple, it represents a result as a multi-slot **fact hyperedge**: what was tested, under which conditions, with which comparison, and where the evidence can be found.
 
----
+中文简介：面向涂料专利的证据型知识图谱原型。将图表、实施例上下文、材料与性能结果组织为可追溯的事实超边，保留页码、区域和对照信息，支持后续人工核验。
 
-## V1.2.2 highlights
+Created and maintained by [Nathan10969](https://github.com/Nathan10969). This initial release publishes an early development snapshot, not the later production system.
 
-- **8 node types**: `Material / Application / Substrate / Property / Process / TestMethod / Evidence / Patent`
-- **`source_section_type`** is restricted to 4 values: `TABLE` (1.00) / `FIGURE` (0.85) / `TABLE_CAPTION_FOOTNOTE` (0.85) / `FIGURE_CAPTION_FOOTNOTE` (0.75) — no free paragraphs in V1
-- **Alias subgraph** carries 5 edge types (`canonical_of` / `synonym_of` / `chemical_subtype_of` / `forbidden_merge` / `must_merge`) with conflict priority `forbidden_merge > must_merge > synonym_of`
-- **`figure_table_units`** is the V1.2.2 spine for figure/table evidence — carries `tagged_entities` JSONB + `figure_subtype` + `caption_footnote_text` + `vlm_description` + `description_embedding` + `extracted_table_html` + `image_path`
-- **Polarity + comparison_group** auto-resolved per V1.2.2 §修订 4 (single negative in same table → bind; otherwise pending review)
+## From documents to evidence
 
-## Model stack
+<img src="docs/assets/architecture.svg" alt="Pipeline: patent PDF, MinerU layout, evidence units, Qwen descriptions and facts, canonical resolution, JSON artifacts and PostgreSQL" width="100%" />
 
-| Role | Model | Where |
+The illustration describes the code flow, not a measured deployment or acceptance result.
+
+- **Evidence first:** document, page, region and optional row/column pointers accompany facts.
+- **Structured results:** Pydantic models and SQL represent materials, applications, substrates, properties, processes, test methods, patents and evidence.
+- **Visual and contextual extraction:** MinerU REST, Qwen-compatible description, paragraph matching and fact parsing integrations are implemented.
+- **Canonicalization with guardrails:** alias lookup and constraints separate synonyms from chemical subtypes and forbidden merges.
+- **Explicit ambiguity:** polarity and comparison-group rules can leave unclear cases unresolved instead of inventing a baseline.
+- **Reviewable artifacts:** per-unit descriptions, matches, proposed canonicals, coverage and facts accompany routing audit records.
+
+## What is—and is not—ready
+
+| Area | In this snapshot | Verification boundary |
 |---|---|---|
-| PDF layout | MinerU (`magic-pdf`) | local A100 |
-| Figure / table description | Qwen3-VL-Plus / Max | DashScope API |
-| Fact extraction (text) | Qwen-Plus | DashScope API |
-| Text embedding | BGE-M3 (1024-dim) | local |
-| Query / answer / verifier | Qwen3.6 | local or API |
+| Section splitting, polarity, comparison groups | Implemented; offline tests included | Rule coverage, not extraction-accuracy validation |
+| Schema, seeds and typed models | Implemented | SQL syntax is checkable offline; DB migration not revalidated here |
+| MinerU and Qwen clients | Implemented integrations | Credentials/network required; no fresh end-to-end acceptance claim |
+| Evidence-unit parsing and routing | Implemented; remaining format-related TODO comments | Validate with your actual MinerU output |
+| Passage Tier-C embeddings | Deferred; currently a no-op | Not a complete embedding/retrieval layer |
+| Production serving, accuracy and corpus coverage | Not established by this release | No production-readiness or performance claim |
 
-## Quick start
+Raw PDFs, private corpora, API keys, generated results and pretrained embedding models are **not included**. Historic technical notes in `docs/` describe development context; they are not independent validation of this public release.
+
+## Start locally
+
+Python 3.10+. Run from the cloned repository so prompts, schema and data paths remain available. Editable installation is recommended; this snapshot is not a self-contained deployment wheel.
 
 ```bash
-# 1. start postgres + pgvector
-docker compose up -d
+git clone git@github.com:Nathan10969/coat-weave.git
+cd coat-weave
+python -m venv .venv
+source .venv/bin/activate   # PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -e . pytest
+python -m coating_kg --help
+```
 
-# 2. set credentials
+The public project name is **CoatWeave**; `coating_kg` imports and CLI remain compatible.
+
+### Offline checks: no database, GPU or API calls
+
+```bash
+python -m pytest tests/ -v
+```
+
+Tests cover English/Chinese/German section boundaries, polarity labels and comparison ambiguity. See [the offline walkthrough](SAMPLE_RUN.md) for interactive examples.
+
+### Optional ingestion: external services required
+
+```bash
 cp .env.example .env
-# edit .env, fill DASHSCOPE_API_KEY
-
-# 3. apply schema + seeds
+# Edit OPENAI_API_KEY, MINERU_TOKEN and input/output paths.
+# Set DB credentials if using database writes.
+docker compose up -d
 bash scripts/setup_db.sh
-
-# 4. ingest one patent end-to-end
-python -m coating_kg ingest "G:/coating_1/20260502062406317/pdf/WO2026077939A1.pdf"
+python -m coating_kg ingest ./data/pdf/example.pdf --skip-db
 ```
 
-For a smoke test that needs **no** DB and **no** API key, run the deterministic-logic unit tests:
+`--skip-db` skips database writes, **not model calls**. `--dry-run` stops after evidence-unit materialization, but PDF parsing can still contact MinerU. Services may incur charges. Docker/`psql`/Bash are needed for DB setup; on Windows use a suitable Bash environment. The database password is a local-development placeholder—change it before exposing any service.
 
-```bash
-pip install -r requirements.txt
-pytest tests/test_section_split.py tests/test_polarity.py tests/test_comparison_group.py -v
+## A fact is more than a triple
+
+Illustrative record only: identifiers and values below are invented, not extracted patent data or a scientific result.
+
+```json
+{
+  "fact_id": "F_DEMO_001",
+  "doc_id": "DEMO_PATENT",
+  "application": "APP_DEMO_COATING",
+  "property": "PROP_DEMO_GLOSS",
+  "result_value": 80,
+  "result_unit": "GU",
+  "comparison_group": "F_DEMO_BASELINE",
+  "evidence_pointer": {
+    "doc_id": "DEMO_PATENT", "page": 12,
+    "region_type": "TABLE", "region_id": "Table 2", "row": "Example 1"
+  },
+  "human_validated": false
+}
 ```
 
-See [`SAMPLE_RUN.md`](SAMPLE_RUN.md) for a walk-through of the offline-runnable parts.
+This is a shortened conceptual view; consult [typed models](src/coating_kg/db/models.py) for required fields and validation.
 
-## Project structure
+## Explore the code
 
-```
-coating_kg/
-├── db/                          # schema.sql + 4 seed files (config tables)
-├── src/coating_kg/
-│   ├── config.py                # typed settings, .env loader
-│   ├── cli.py                   # `python -m coating_kg ingest <pdf>`
-│   ├── db/                      # connection pool, pydantic models, insert/query
-│   ├── pipeline/                # PDF → layout → unit → VLM → fact
-│   └── ontology/                # canonical resolver + consistency check
-├── prompts/                     # vlm_figure / vlm_table / fact_extract
-├── tests/                       # pytest — section_split / polarity / comparison_group
-└── scripts/                     # setup_db.sh / ingest_one.sh / ingest_batch.sh
+```text
+src/coating_kg/
+├── cli.py          Ingest, setup-db and entity-tag commands
+├── db/             Models, connections, inserts and queries
+├── pipeline/       Layout, units, routing, matching and facts
+└── ontology/       Alias resolution and consistency checks
+db/                 PostgreSQL schema and starter seeds
+prompts/            Figure, table, matching and fact prompts
+tests/              Offline deterministic-rule tests
+scripts/            Development and batch utilities
 ```
 
-## W2 schedule (V1.2.2 §修订 6)
-
-| Sub-week | Goal | Files involved |
-|---|---|---|
-| **W2.1** MinerU integration | parse 1 native-text patent, write `Examples` section splitter, slice figures/tables | `pipeline/pdf_layout.py`, `pipeline/section_split.py`, `pipeline/unit_extractor.py` |
-| **W2.2** Qwen-VL API | DashScope client, `figure_table_units` insert path, prompt v1 | `pipeline/vlm_describe.py`, `db/insert.py`, `prompts/vlm_*.txt` |
-| **W2.3** Entity tag + polarity | `identified_entities` → `tagged_entities`, polarity classifier, `comparison_group` resolver | `pipeline/entity_tagger.py`, `pipeline/polarity.py`, `pipeline/comparison_group.py` |
-| **W2.4** Golden set (5 patents) | full pipeline on 5 patents, manual review of 50 units | (everything) |
-
-## Implementation status
-
-| Module | Status |
-|---|---|
-| `db/schema.sql` | **complete & executable** (PostgreSQL 16 + pgvector) |
-| `db/seed_*.sql` | **complete** (4 seed files, ~50/63/22/15 entries) |
-| `pipeline/section_split.py` | **real implementation** (English / Chinese / German) |
-| `pipeline/polarity.py` | **real implementation** (per V1.2.2 §修订 4) |
-| `pipeline/comparison_group.py` | **real implementation** (per V1.2.2 §修订 4) |
-| `pipeline/vlm_describe.py` | **real DashScope client** (tenacity retry, JSON-only output) |
-| `ontology/canonical_resolver.py` | **real** (queries aliases + nodes) |
-| `ontology/consistency_check.py` | **real** (forbidden_merge bidirectional) |
-| `pipeline/pdf_layout.py` | skeleton — calls `magic-pdf` if available |
-| `pipeline/unit_extractor.py` | skeleton with TODOs, works on MinerU JSON |
-| `pipeline/fact_extractor.py` | skeleton — Qwen-Plus prompt wired, parsing TODO |
-
-## References
-
-- `G:\coating_1\v1.2_design\06_entity_relation_hyperedge.md` — node + edge + hyperedge spec
-- `G:\coating_1\v1.2_design\08_v122_amendments.md` — V1.2.1 → V1.2.2 deltas
-- `G:\coating_1\v1.2_design\03_config_tables.md` — `forbidden_merge` / `must_merge` / `property_directionality` source
-- `G:\coating_1\Coating项目V1.2.2_完整设计稿.docx` — final consolidated design
+Suggested reading: [fact models](src/coating_kg/db/models.py) → [comparison rules](src/coating_kg/pipeline/comparison_group.py) → [ingest CLI](src/coating_kg/cli.py) → [SQL schema](db/schema.sql).
 
 ## License
 
-Internal R&D project. Not for distribution.
+[MIT](LICENSE) · Copyright © 2026 Nathan10969. Covers repository code and original illustrations, not third-party patents, datasets or service terms.

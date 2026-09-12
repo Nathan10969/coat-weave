@@ -9,7 +9,7 @@ logic of V1.2.2 you can run on a fresh laptop the moment you `git clone`.
 Python 3.10+, then:
 
 ```bash
-cd coating_kg
+cd coat-weave
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 source .venv/bin/activate
@@ -17,7 +17,7 @@ pip install pydantic pytest python-dotenv
 ```
 
 (That's all you need for the offline tests — the full
-`requirements.txt` adds psycopg2 / dashscope / magic-pdf which the offline
+`requirements.txt` adds database and API-client dependencies which the offline
 flow doesn't touch.)
 
 ## 1. Run the unit tests
@@ -26,7 +26,7 @@ flow doesn't touch.)
 pytest tests/ -v
 ```
 
-You should see ~22 tests pass, covering:
+The suite covers:
 
 - `test_section_split.py` — English, Chinese, German Examples-section
   detection + the no-Examples and `EMBODIMENTS` variants.
@@ -105,16 +105,17 @@ for path in [
 "
 ```
 
-If all five print `OK`, the schema is syntactically valid PostgreSQL 16
-and ready to load.
+If all five print `OK`, the SQL syntax was accepted by the parser. This is
+not a database execution or migration check.
 
 ## What you still need a real environment for
 
 | Module | Needs |
 |---|---|
-| `pipeline.pdf_layout.parse_pdf` | `magic-pdf>=0.7` + an A100 (or just CPU, slower) |
+| `pipeline.pdf_layout.parse_pdf` | MinerU API token + network |
 | `pipeline.vlm_describe.QwenVLClient` | `DASHSCOPE_API_KEY` + network |
 | `pipeline.fact_extractor.FactExtractor` | same DashScope key |
 | `db/insert.py`, `db/query.py`, the CLI ingest path | running PostgreSQL with pgvector |
 
-Run those on your A100 box once the local logic is green.
+Validate integrations separately. Offline tests do not establish extraction
+quality, corpus coverage or production readiness.

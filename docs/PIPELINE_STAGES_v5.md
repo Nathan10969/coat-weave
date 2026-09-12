@@ -607,7 +607,7 @@ vllm serve ~/models/Qwen3.6-27B-AWQ-INT4 \
 ### 杈撳叆
 
 ```
-G:\coating_1\20260502062406317\pdf\WO2026052438A1.pdf
+data/pdf/WO2026052438A1.pdf
 ```
 
 42 椤?PDF锛屽惈锛?- 鎽樿銆佽鏄庛€乧laims锛坧age 1-22锛?- Examples 绔犺妭锛坧age 23-41锛夊惈 6 寮犺〃

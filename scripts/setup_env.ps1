@@ -1,6 +1,6 @@
 # Setup script for the coating_kg project (Windows PowerShell)
 # Usage:
-#   PS> cd G:\coating_1\coating_kg
+#   PS> cd coat-weave
 #   PS> .\scripts\setup_env.ps1
 
 $ErrorActionPreference = "Stop"

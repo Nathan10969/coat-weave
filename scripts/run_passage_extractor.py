@@ -6,7 +6,7 @@ Tier B (LLM NER) and Tier C (BGE-M3 embedding) are TODO for V2.0.5.
 Output: data/passages/<doc_id>/passages.json (one file per PDF).
 
 Usage:
-    cd G:\\coating_1\\coating_kg
+    cd coat-weave
     python scripts/run_passage_extractor.py
     # or limit to first N docs:
     python scripts/run_passage_extractor.py --limit 10

@@ -9,8 +9,8 @@ Property cell 出现 "PROP_X@left:" 这种空尾巴冒号，污染 CSV。
 会跳过并 logger.info 报。
 
 跑:
-    cd G:\\coating_1\\coating_kg
-    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\cleanup_empty_cell_facts.py
+    cd coat-weave
+    & "python" scripts\\cleanup_empty_cell_facts.py
 """
 from __future__ import annotations
 

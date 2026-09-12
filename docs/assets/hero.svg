@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">CoatWeave</title><desc id="desc">Original illustration of patent evidence woven into a coating knowledge graph.</desc>
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1224"/><stop offset="1" stop-color="#132d3c"/></linearGradient><linearGradient id="coat" x2="1"><stop stop-color="#14b8a6"/><stop offset="1" stop-color="#67e8f9"/></linearGradient></defs>
+  <rect width="1200" height="360" rx="20" fill="url(#bg)"/>
+  <g stroke="#244655" stroke-width="1" opacity="0.4"><path d="M0 280H1200M0 310H1200M0 340H1200M760 0V360M820 0V360M880 0V360M940 0V360M1000 0V360M1060 0V360M1120 0V360"/></g>
+  <text x="64" y="79" font-family="Arial,sans-serif" font-size="15" letter-spacing="4" fill="#5eead4">PATENT EVIDENCE / MATERIALS INTELLIGENCE</text>
+  <text x="60" y="161" font-family="Arial,sans-serif" font-size="72" font-weight="700" fill="#f1f5f9">CoatWeave</text>
+  <text x="64" y="205" font-family="Arial,sans-serif" font-size="23" fill="#a9c1cf">From coating patents to traceable knowledge.</text>
+  <rect x="64" y="245" width="252" height="33" rx="16" fill="#173e45"/>
+  <text x="83" y="267" font-family="Arial,sans-serif" font-size="14" fill="#99f6e4">EVIDENCE-GROUNDED GRAPHS</text>
+  <g transform="translate(713 71)">
+    <rect width="127" height="164" rx="10" fill="#e2e8f0"/><path d="M23 28H104M23 44H90M23 60H103" stroke="#64748b" stroke-width="5"/>
+    <rect x="23" y="81" width="81" height="56" rx="3" fill="#cbd5e1"/><path d="M23 99H104M23 117H104M50 81V137M78 81V137" stroke="#94a3b8" stroke-width="2"/>
+    <path d="M142 74C202 74 174 18 253 18M142 89C208 89 213 101 278 101M142 107C196 107 190 164 247 164" stroke="#2dd4bf" stroke-width="2" fill="none"/>
+    <g stroke="#527686" stroke-width="2"><path d="M253 18L278 101L247 164L344 180L350 77L253 18M278 101L350 77M278 101L344 180"/></g>
+    <g fill="#5eead4"><circle cx="253" cy="18" r="13"/><circle cx="278" cy="101" r="19"/><circle cx="247" cy="164" r="11"/><circle cx="350" cy="77" r="12"/><circle cx="344" cy="180" r="14"/></g>
+    <circle cx="278" cy="101" r="6" fill="#102531"/>
+  </g>
+  <g transform="translate(710 293)"><rect width="371" height="9" rx="4" fill="url(#coat)"/><rect y="13" width="371" height="9" rx="4" fill="#3b6978"/><rect y="26" width="371" height="9" rx="4" fill="#233e51"/></g>
+</svg>

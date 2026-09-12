@@ -4,9 +4,9 @@ Run from any cwd; paths are computed relative to this script's location.
 
 Windows:
     $env:PYTHONIOENCODING = "utf-8"
-    $env:PYTHONPATH = "G:\\coating_1\\coating_kg\\src"
-    cd G:\\coating_1\\coating_kg
-    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\test_fact_extract_tier0.py
+    $env:PYTHONPATH = "src"
+    cd coat-weave
+    & "python" scripts\\test_fact_extract_tier0.py
 
 Linux (sandbox):
     cd /sessions/.../coating_1/coating_kg
