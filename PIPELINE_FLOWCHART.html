@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pipeline HTML 流程图</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #5b6472;
+      --line: #6b7280;
+      --parse: #d9eef8;
+      --gate: #fff0bf;
+      --llm: #e7def8;
+      --artifact: #dff3e7;
+      --review: #f9dccf;
+      --evidence: #dce7ff;
+      --fact: #d7f1ef;
+      --shadow: 0 12px 32px rgba(17, 24, 39, 0.08);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    header {
+      padding: 28px 32px 18px;
+      background: #ffffff;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    main {
+      padding: 22px 28px 36px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid #d8dee8;
+      border-radius: 999px;
+      background: #fff;
+      color: #334155;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+
+    .stage { background: var(--parse); }
+    .gate { background: var(--gate); }
+    .llm { background: var(--llm); }
+    .artifact { background: var(--artifact); }
+    .review { background: var(--review); }
+    .evidence { background: var(--evidence); }
+    .fact { background: var(--fact); }
+
+    .canvas {
+      overflow: auto;
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid #e1e6ef;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    svg {
+      display: block;
+      min-width: 1480px;
+      width: 100%;
+      height: auto;
+    }
+
+    .node rect,
+    .node polygon {
+      stroke: #334155;
+      stroke-width: 1.3;
+      rx: 8;
+      ry: 8;
+    }
+
+    .node text {
+      fill: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    .node .title {
+      font-size: 16px;
+      font-weight: 750;
+    }
+
+    .node .small {
+      font-size: 12px;
+      fill: #475569;
+    }
+
+    .edge {
+      fill: none;
+      stroke: var(--line);
+      stroke-width: 2;
+      marker-end: url(#arrow);
+    }
+
+    .edge.soft {
+      stroke-dasharray: 7 6;
+    }
+
+    .label {
+      font-size: 12px;
+      fill: #475569;
+      font-weight: 650;
+    }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(240px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid #e1e6ef;
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 8px 22px rgba(17, 24, 39, 0.05);
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .panel p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .panel ul {
+      margin: 0;
+      padding-left: 18px;
+      color: #334155;
+      font-size: 14px;
+    }
+
+    .panel li + li {
+      margin-top: 5px;
+    }
+
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #eef2f7;
+      color: #1f2937;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border: 1px solid #e2e8f0;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f5f9;
+    }
+
+    @media (max-width: 980px) {
+      header {
+        padding: 22px 18px 14px;
+      }
+
+      main {
+        padding: 16px;
+      }
+
+      .section-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Pipeline HTML 流程图</h1>
+    <p class="subtitle">把涂料专利 PDF 拆成结构化事实和可回溯证据。图里用颜色区分解析、规则门控、VLM/LLM、产物、复核与证据层。</p>
+  </header>
+
+  <main>
+    <div class="toolbar" aria-label="图例">
+      <span class="chip"><span class="dot stage"></span>解析 / 规则处理</span>
+      <span class="chip"><span class="dot gate"></span>Gate / 分支</span>
+      <span class="chip"><span class="dot llm"></span>VLM / LLM 调用</span>
+      <span class="chip"><span class="dot artifact"></span>中间产物</span>
+      <span class="chip"><span class="dot fact"></span>结构化事实</span>
+      <span class="chip"><span class="dot evidence"></span>证据层</span>
+      <span class="chip"><span class="dot review"></span>Review / Quarantine</span>
+    </div>
+
+    <section class="canvas" aria-label="pipeline 主流程图">
+      <svg viewBox="0 0 1480 1050" role="img" aria-labelledby="chart-title chart-desc">
+        <title id="chart-title">专利抽取 pipeline 主流程</title>
+        <desc id="chart-desc">从 PDF 到 MinerU 解析、metadata 预筛、Examples 定位、unit 抽取、VLM 描述、router 分流、fact extraction 和 Layer 1 evidence 的流程图。</desc>
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#6b7280"></path>
+          </marker>
+          <filter id="nodeShadow" x="-10%" y="-10%" width="120%" height="130%">
+            <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#111827" flood-opacity="0.12"></feDropShadow>
+          </filter>
+        </defs>
+
+        <!-- Top line -->
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="40" y="60" width="150" height="76" fill="#d9eef8"></rect>
+          <text x="115" y="93" text-anchor="middle" class="title">PDF</text>
+          <text x="115" y="116" text-anchor="middle" class="small">专利原文</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="240" y="50" width="178" height="96" fill="#d9eef8"></rect>
+          <text x="329" y="82" text-anchor="middle" class="title">pdf_layout.py</text>
+          <text x="329" y="106" text-anchor="middle" class="small">MinerU 版面解析</text>
+          <text x="329" y="126" text-anchor="middle" class="small">text / table / image</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="470" y="50" width="182" height="96" fill="#dff3e7"></rect>
+          <text x="561" y="82" text-anchor="middle" class="title">MinerU JSON</text>
+          <text x="561" y="106" text-anchor="middle" class="small">content_list</text>
+          <text x="561" y="126" text-anchor="middle" class="small">layout / images</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="705" y="50" width="200" height="96" fill="#d9eef8"></rect>
+          <text x="805" y="82" text-anchor="middle" class="title">metadata 抽取</text>
+          <text x="805" y="106" text-anchor="middle" class="small">title / IPC / abstract</text>
+          <text x="805" y="126" text-anchor="middle" class="small">patent_metadata_extractor</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <polygon points="980,48 1088,98 980,148 872,98" fill="#fff0bf"></polygon>
+          <text x="980" y="92" text-anchor="middle" class="title">涂料预筛</text>
+          <text x="980" y="114" text-anchor="middle" class="small">规则启发式 gate</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="1138" y="50" width="205" height="96" fill="#d9eef8"></rect>
+          <text x="1240" y="82" text-anchor="middle" class="title">section_split.py</text>
+          <text x="1240" y="106" text-anchor="middle" class="small">定位 Examples</text>
+          <text x="1240" y="126" text-anchor="middle" class="small">或 whole-doc fallback</text>
+        </g>
+
+        <path class="edge" d="M190 98 L240 98"></path>
+        <path class="edge" d="M418 98 L470 98"></path>
+        <path class="edge" d="M652 98 L705 98"></path>
+        <path class="edge" d="M905 98 L872 98"></path>
+        <path class="edge" d="M1088 98 L1138 98"></path>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="890" y="190" width="180" height="78" fill="#f9dccf"></rect>
+          <text x="980" y="223" text-anchor="middle" class="title">reject / review</text>
+          <text x="980" y="246" text-anchor="middle" class="small">明显无关或低置信</text>
+        </g>
+        <path class="edge soft" d="M980 148 L980 190"></path>
+        <text x="1018" y="172" class="label">低相关</text>
+
+        <!-- Examples split branch -->
+        <g class="node" filter="url(#nodeShadow)">
+          <polygon points="1240,200 1345,250 1240,300 1135,250" fill="#fff0bf"></polygon>
+          <text x="1240" y="244" text-anchor="middle" class="title">Examples</text>
+          <text x="1240" y="266" text-anchor="middle" class="small">span 找到?</text>
+        </g>
+        <path class="edge" d="M1240 146 L1240 200"></path>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="985" y="340" width="210" height="82" fill="#d9eef8"></rect>
+          <text x="1090" y="374" text-anchor="middle" class="title">只取 Examples</text>
+          <text x="1090" y="397" text-anchor="middle" class="small">噪声和成本较低</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="1290" y="340" width="150" height="82" fill="#f9dccf"></rect>
+          <text x="1365" y="374" text-anchor="middle" class="title">全文 fallback</text>
+          <text x="1365" y="397" text-anchor="middle" class="small">保 recall，需 review</text>
+        </g>
+
+        <path class="edge" d="M1192 276 C1130 305,1100 315,1090 340"></path>
+        <text x="1115" y="305" class="label">是</text>
+        <path class="edge" d="M1290 276 C1340 304,1360 318,1365 340"></path>
+        <text x="1350" y="305" class="label">否</text>
+
+        <!-- Unit line -->
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="1020" y="500" width="230" height="102" fill="#d9eef8"></rect>
+          <text x="1135" y="532" text-anchor="middle" class="title">unit_extractor.py</text>
+          <text x="1135" y="556" text-anchor="middle" class="small">image -> figure unit</text>
+          <text x="1135" y="576" text-anchor="middle" class="small">equation + img_path -> structure</text>
+        </g>
+
+        <path class="edge" d="M1090 422 C1090 456,1118 468,1135 500"></path>
+        <path class="edge" d="M1365 422 C1365 468,1254 464,1215 500"></path>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="745" y="500" width="205" height="102" fill="#dff3e7"></rect>
+          <text x="848" y="532" text-anchor="middle" class="title">unit 落盘</text>
+          <text x="848" y="556" text-anchor="middle" class="small">meta.json / table.html</text>
+          <text x="848" y="576" text-anchor="middle" class="small">caption.txt / image.png</text>
+        </g>
+        <path class="edge" d="M1020 551 L950 551"></path>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="500" y="500" width="190" height="102" fill="#e7def8"></rect>
+          <text x="595" y="532" text-anchor="middle" class="title">vlm_describe.py</text>
+          <text x="595" y="556" text-anchor="middle" class="small">图/表结构化描述</text>
+          <text x="595" y="576" text-anchor="middle" class="small">entities / subtype</text>
+        </g>
+        <path class="edge" d="M745 551 L690 551"></path>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <polygon points="330,488 455,551 330,614 205,551" fill="#fff0bf"></polygon>
+          <text x="330" y="544" text-anchor="middle" class="title">unit_router</text>
+          <text x="330" y="568" text-anchor="middle" class="small">三路分流 + confidence</text>
+        </g>
+        <path class="edge" d="M500 551 L455 551"></path>
+
+        <!-- Router branches -->
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="75" y="695" width="190" height="92" fill="#e7def8"></rect>
+          <text x="170" y="727" text-anchor="middle" class="title">段落匹配</text>
+          <text x="170" y="750" text-anchor="middle" class="small">paragraph_extractor</text>
+          <text x="170" y="770" text-anchor="middle" class="small">paragraph_matcher score</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="325" y="695" width="190" height="92" fill="#e7def8"></rect>
+          <text x="420" y="727" text-anchor="middle" class="title">fact_extractor</text>
+          <text x="420" y="750" text-anchor="middle" class="small">抽 FactHyperedge</text>
+          <text x="420" y="770" text-anchor="middle" class="small">coverage / quality</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="575" y="695" width="190" height="92" fill="#fff0bf"></rect>
+          <text x="670" y="727" text-anchor="middle" class="title">canonical gate</text>
+          <text x="670" y="750" text-anchor="middle" class="small">APP / PROP 必须解析</text>
+          <text x="670" y="770" text-anchor="middle" class="small">否则 reject fact</text>
+        </g>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="825" y="695" width="185" height="92" fill="#d7f1ef"></rect>
+          <text x="918" y="727" text-anchor="middle" class="title">Layer 2 facts</text>
+          <text x="918" y="750" text-anchor="middle" class="small">结构化事实</text>
+          <text x="918" y="770" text-anchor="middle" class="small">数值 / 条件 / 证据</text>
+        </g>
+
+        <path class="edge" d="M286 595 C235 630,180 650,170 695"></path>
+        <text x="180" y="641" class="label">extract_facts</text>
+        <path class="edge" d="M265 741 L325 741"></path>
+        <path class="edge" d="M515 741 L575 741"></path>
+        <path class="edge" d="M765 741 L825 741"></path>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="300" y="860" width="210" height="86" fill="#dce7ff"></rect>
+          <text x="405" y="892" text-anchor="middle" class="title">pending_figures</text>
+          <text x="405" y="915" text-anchor="middle" class="small">register_layer1</text>
+        </g>
+        <path class="edge" d="M330 614 C340 700,382 792,405 860"></path>
+        <text x="378" y="675" class="label">register_layer1</text>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="40" y="860" width="210" height="86" fill="#f9dccf"></rect>
+          <text x="145" y="892" text-anchor="middle" class="title">_routed_out</text>
+          <text x="145" y="915" text-anchor="middle" class="small">delete 只做软隔离</text>
+        </g>
+        <path class="edge" d="M246 586 C160 666,134 770,145 860"></path>
+        <text x="128" y="705" class="label">delete</text>
+
+        <!-- Layer 1 path -->
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="690" y="250" width="205" height="92" fill="#d9eef8"></rect>
+          <text x="792" y="282" text-anchor="middle" class="title">passage_extractor</text>
+          <text x="792" y="305" text-anchor="middle" class="small">全文段落实体共现</text>
+          <text x="792" y="325" text-anchor="middle" class="small">alias / Tier B</text>
+        </g>
+        <path class="edge soft" d="M561 146 C570 220,630 260,690 285"></path>
+        <text x="598" y="208" class="label">text blocks</text>
+
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="610" y="860" width="190" height="86" fill="#dce7ff"></rect>
+          <text x="705" y="892" text-anchor="middle" class="title">Layer 1</text>
+          <text x="705" y="915" text-anchor="middle" class="small">Passage / Figure evidence</text>
+        </g>
+        <path class="edge" d="M895 296 C1060 400,965 800,800 890"></path>
+        <path class="edge" d="M510 903 L610 903"></path>
+
+        <!-- Final -->
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="1100" y="790" width="260" height="126" fill="#dff3e7"></rect>
+          <text x="1230" y="828" text-anchor="middle" class="title">最终可用产物</text>
+          <text x="1230" y="854" text-anchor="middle" class="small">可信结构化事实</text>
+          <text x="1230" y="876" text-anchor="middle" class="small">可回溯段落 / 图表证据</text>
+          <text x="1230" y="898" text-anchor="middle" class="small">支持检索、分析、前端展示</text>
+        </g>
+
+        <path class="edge" d="M1010 741 C1065 755,1090 792,1100 838"></path>
+        <path class="edge" d="M800 903 C920 942,1030 930,1100 880"></path>
+
+        <!-- Quality box -->
+        <g class="node" filter="url(#nodeShadow)">
+          <rect x="1060" y="670" width="305" height="76" fill="#fff0bf"></rect>
+          <text x="1212" y="700" text-anchor="middle" class="title">统一质量 envelope</text>
+          <text x="1212" y="723" text-anchor="middle" class="small">status / confidence / issues / metrics / evidence</text>
+        </g>
+        <path class="edge soft" d="M920 695 C960 662,1010 656,1060 692"></path>
+      </svg>
+    </section>
+
+    <section class="section-grid">
+      <article class="panel">
+        <h2>主线理解</h2>
+        <p>这条 pipeline 的本质是把专利 Examples 里的图表和正文拆成两类东西。</p>
+        <ul>
+          <li><code>Layer 2 facts</code>：结构化数值事实。</li>
+          <li><code>Layer 1 evidence</code>：正文段落和图表证据。</li>
+          <li>最终目标是事实可用、证据可回溯。</li>
+        </ul>
+      </article>
+
+      <article class="panel">
+        <h2>核心分流</h2>
+        <p><code>unit_router.py</code> 是降成本和降噪的关键。</p>
+        <ul>
+          <li><code>extract_facts</code>：进入事实抽取。</li>
+          <li><code>register_layer1</code>：只登记为证据。</li>
+          <li><code>delete</code>：软隔离到 <code>_routed_out</code>。</li>
+        </ul>
+      </article>
+
+      <article class="panel">
+        <h2>质量门控</h2>
+        <p>后续应该把每个 stage 都统一成 <code>pass / review / fail</code>。</p>
+        <ul>
+          <li>低 coverage 进入 review。</li>
+          <li>canonical 未解析则拒收 fact。</li>
+          <li>低置信路由只隔离，不物理删除。</li>
+        </ul>
+      </article>
+
+      <article class="panel wide">
+        <h2>阶段与产物对照</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>阶段</th>
+              <th>代码位置</th>
+              <th>主要产物</th>
+              <th>当前 gate / 建议</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>PDF 解析</td>
+              <td><code>pdf_layout.py</code></td>
+              <td><code>content_list.json</code>, <code>layout.json</code>, images</td>
+              <td>已有 API state；建议补 page/block sanity。</td>
+            </tr>
+            <tr>
+              <td>文档预筛</td>
+              <td><code>patent_metadata_extractor.py</code></td>
+              <td>metadata JSON, <code>is_coating_patent</code></td>
+              <td>规则启发式；建议加 relevance score 和 evidence spans。</td>
+            </tr>
+            <tr>
+              <td>unit 抽取</td>
+              <td><code>unit_extractor.py</code></td>
+              <td><code>FigureTableUnit</code></td>
+              <td>Examples 找不到会全文 fallback；建议标记 review。</td>
+            </tr>
+            <tr>
+              <td>VLM 描述</td>
+              <td><code>vlm_describe.py</code></td>
+              <td>description, entities, subtype, table_subject</td>
+              <td>已有 retry 和 JSON parse；建议加 schema/enum validation。</td>
+            </tr>
+            <tr>
+              <td>Router</td>
+              <td><code>unit_router.py</code></td>
+              <td>route, reason, route_confidence</td>
+              <td>低 confidence 进入 review，delete 只软隔离。</td>
+            </tr>
+            <tr>
+              <td>Fact 抽取</td>
+              <td><code>fact_extractor.py</code></td>
+              <td><code>FactHyperedge</code>, coverage, quality, rejected_facts</td>
+              <td>coverage 和 canonical gate 是事实可信的第一道门。</td>
+            </tr>
+            <tr>
+              <td>证据层</td>
+              <td><code>passage_extractor.py</code></td>
+              <td><code>PassageHyperedge</code>, <code>FigureHyperedge</code></td>
+              <td>当前 confidence 是启发式；后续可接 rerank/embedding。</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
+

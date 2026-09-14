@@ -1,122 +1,47 @@
-<p align="center"><img src="docs/assets/hero.svg" alt="CoatWeave: weaving coating patent evidence into knowledge graphs" width="100%" /></p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14b8a6" alt="MIT license" /></a>
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3b82f6" alt="Python 3.10 or newer" />
-  <img src="https://img.shields.io/badge/PostgreSQL-pgvector-334155" alt="PostgreSQL with pgvector" />
-  <img src="https://img.shields.io/badge/status-research%20prototype-64748b" alt="Research prototype" />
-</p>
+<p align="center"><img src="docs/assets/hero.svg" alt="CoatWeave: coating patent evidence and knowledge graphs" width="100%" /></p>
 
 # CoatWeave
 
-**Evidence-grounded knowledge graphs for coating patents.**
+Evidence-grounded coating patent knowledge-graph research, created and maintained by [Nathan10969](https://github.com/Nathan10969).
 
-CoatWeave turns patent figures, tables and surrounding context into structured, traceable coating facts. Instead of reducing every result to a loose subject–relation–object triple, it represents a result as a multi-slot **fact hyperedge**: what was tested, under which conditions, with which comparison, and where the evidence can be found.
+中文简介：面向涂料专利的证据型知识图谱研究。本版公开历史源码，供阅读与追溯，不是完整可安装或可运行的发行包。
 
-中文简介：面向涂料专利的证据型知识图谱原型。将图表、实施例上下文、材料与性能结果组织为可追溯的事实超边，保留页码、区域和对照信息，支持后续人工核验。
+## Snapshot 02 — historical source archive
 
-Created and maintained by [Nathan10969](https://github.com/Nathan10969). This initial release publishes an early development snapshot, not the later production system.
+This release publishes timeline snapshot **02**, dated **2026-05-12 19:47:56 +08:00**, from development branch `feat/pipeline-stage0-2-gates` (source tip `e37372841b98dd1e16739eb737de8e810588c92d`). The publication commit uses its actual publication date; the source timestamp above is not a newly claimed development date.
 
-## From documents to evidence
+The original ZIP contains 27 files, including 21 Python modules. Public branding, this README, the MIT license and original illustrations accompany the preserved source. Earlier public code remains available through [snapshot-01](https://github.com/Nathan10969/coat-weave/tree/snapshot-01); this version is available through [snapshot-02](https://github.com/Nathan10969/coat-weave/tree/snapshot-02).
 
-<img src="docs/assets/architecture.svg" alt="Pipeline: patent PDF, MinerU layout, evidence units, Qwen descriptions and facts, canonical resolution, JSON artifacts and PostgreSQL" width="100%" />
+## What the source contains
 
-The illustration describes the code flow, not a measured deployment or acceptance result.
+- Patent PDF layout and metadata extraction integrations.
+- Figure/table evidence units, materialization and routing.
+- Paragraph matching, proposed facts and canonical resolution.
+- Typed evidence models and historical pipeline gate notes.
 
-- **Evidence first:** document, page, region and optional row/column pointers accompany facts.
-- **Structured results:** Pydantic models and SQL represent materials, applications, substrates, properties, processes, test methods, patents and evidence.
-- **Visual and contextual extraction:** MinerU REST, Qwen-compatible description, paragraph matching and fact parsing integrations are implemented.
-- **Canonicalization with guardrails:** alias lookup and constraints separate synonyms from chemical subtypes and forbidden merges.
-- **Explicit ambiguity:** polarity and comparison-group rules can leave unclear cases unresolved instead of inventing a baseline.
-- **Reviewable artifacts:** per-unit descriptions, matches, proposed canonicals, coverage and facts accompany routing audit records.
+Read [the flow overview](PIPELINE_FLOW_OVERVIEW.md), [the historical quality audit](PIPELINE_QUALITY_AUDIT.md), [the flowchart](PIPELINE_FLOWCHART.html), [CLI source](cli.py) and [fact models](db/models.py). These development notes describe intended or implemented code paths, not independently verified production results.
 
-## What is—and is not—ready
+<img src="docs/assets/architecture.svg" alt="Conceptual coating patent evidence pipeline" width="100%" />
 
-| Area | In this snapshot | Verification boundary |
-|---|---|---|
-| Section splitting, polarity, comparison groups | Implemented; offline tests included | Rule coverage, not extraction-accuracy validation |
-| Schema, seeds and typed models | Implemented | SQL syntax is checkable offline; DB migration not revalidated here |
-| MinerU and Qwen clients | Implemented integrations | Credentials/network required; no fresh end-to-end acceptance claim |
-| Evidence-unit parsing and routing | Implemented; remaining format-related TODO comments | Validate with your actual MinerU output |
-| Passage Tier-C embeddings | Deferred; currently a no-op | Not a complete embedding/retrieval layer |
-| Production serving, accuracy and corpus coverage | Not established by this release | No production-readiness or performance claim |
+The illustration is a conceptual project overview, not a claim that every stage or dependency is complete in this snapshot.
 
-Raw PDFs, private corpora, API keys, generated results and pretrained embedding models are **not included**. Historic technical notes in `docs/` describe development context; they are not independent validation of this public release.
+## Known limitations — intentionally not repaired here
 
-## Start locally
+This is an **incomplete historical source archive**, not a supported installation. The source ZIP has no `pyproject.toml`, dependency manifest or test suite. Package-relative imports and the historical Windows launcher do not provide a verified default launch from the `coat-weave` clone directory.
 
-Python 3.10+. Run from the cloned repository so prompts, schema and data paths remain available. Editable installation is recommended; this snapshot is not a self-contained deployment wheel.
+Required resources are absent: `prompts/fact_extract.txt`, `seed_canonical_starter.sql`, `seed_property_directionality.sql` and `seed_must_merge_starter.sql`. Reading the fact prompt fails with `FileNotFoundError` before any model call. Missing seed resources prevent a complete seeded canonical-resolution setup. Additional environment/dependency integration may be needed.
 
-```bash
-git clone git@github.com:Nathan10969/coat-weave.git
-cd coat-weave
-python -m venv .venv
-source .venv/bin/activate   # PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -e . pytest
-python -m coating_kg --help
-```
+No business logic, package shim or missing resource was invented to make this archive look complete. Installation instructions and the previous snapshot's test results do not apply to this version.
 
-The public project name is **CoatWeave**; `coating_kg` imports and CLI remain compatible.
+## Publication checks and boundaries
 
-### Offline checks: no database, GPU or API calls
+- Frozen source ZIP size and SHA-256 verified against the local timeline.
+- Python syntax parsing: all 21 source modules passed.
+- Package-context module import and CLI help smoke passed in an existing isolated dependency environment; this is not a clean-install test.
+- Gitleaks directory scan passed for this publication tree.
+- README local links and retained SVG illustrations checked.
 
-```bash
-python -m pytest tests/ -v
-```
-
-Tests cover English/Chinese/German section boundaries, polarity labels and comparison ambiguity. See [the offline walkthrough](SAMPLE_RUN.md) for interactive examples.
-
-### Optional ingestion: external services required
-
-```bash
-cp .env.example .env
-# Edit OPENAI_API_KEY, MINERU_TOKEN and input/output paths.
-# Set DB credentials if using database writes.
-docker compose up -d
-bash scripts/setup_db.sh
-python -m coating_kg ingest ./data/pdf/example.pdf --skip-db
-```
-
-`--skip-db` skips database writes, **not model calls**. `--dry-run` stops after evidence-unit materialization, but PDF parsing can still contact MinerU. Services may incur charges. Docker/`psql`/Bash are needed for DB setup; on Windows use a suitable Bash environment. The database password is a local-development placeholder—change it before exposing any service.
-
-## A fact is more than a triple
-
-Illustrative record only: identifiers and values below are invented, not extracted patent data or a scientific result.
-
-```json
-{
-  "fact_id": "F_DEMO_001",
-  "doc_id": "DEMO_PATENT",
-  "application": "APP_DEMO_COATING",
-  "property": "PROP_DEMO_GLOSS",
-  "result_value": 80,
-  "result_unit": "GU",
-  "comparison_group": "F_DEMO_BASELINE",
-  "evidence_pointer": {
-    "doc_id": "DEMO_PATENT", "page": 12,
-    "region_type": "TABLE", "region_id": "Table 2", "row": "Example 1"
-  },
-  "human_validated": false
-}
-```
-
-This is a shortened conceptual view; consult [typed models](src/coating_kg/db/models.py) for required fields and validation.
-
-## Explore the code
-
-```text
-src/coating_kg/
-├── cli.py          Ingest, setup-db and entity-tag commands
-├── db/             Models, connections, inserts and queries
-├── pipeline/       Layout, units, routing, matching and facts
-└── ontology/       Alias resolution and consistency checks
-db/                 PostgreSQL schema and starter seeds
-prompts/            Figure, table, matching and fact prompts
-tests/              Offline deterministic-rule tests
-scripts/            Development and batch utilities
-```
-
-Suggested reading: [fact models](src/coating_kg/db/models.py) → [comparison rules](src/coating_kg/pipeline/comparison_group.py) → [ingest CLI](src/coating_kg/cli.py) → [SQL schema](db/schema.sql).
+No ingestion acceptance, extraction accuracy, database migration, deployment or end-to-end run is claimed. No paid API calls, database writes or GPU experiments were performed. Raw PDFs, private corpora, API keys, pretrained models and generated runtime results are not included.
 
 ## License
 
