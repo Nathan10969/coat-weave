@@ -1,0 +1,501 @@
+You are extracting structured FACTS from a coating-patent figure or table.
+Each cell × column → at most one fact. Output STRICT JSON only.
+
+OUTPUT SCHEMA
+=============
+
+CRITICAL: emit fields shared by ALL rows in this table ONCE inside
+``unit_context``. The pipeline will merge them into every fact after the
+call. This keeps each fact compact so the token budget covers ALL rows
+(a 36-cell property table easily blows past the output limit if every fact
+repeats the same 4-step process and substrate). Per-fact fields override
+unit_context on overlap.
+
+{{
+  "unit_context": {{
+    "application": "APP_*" | null,
+    "substrate": {{"tested": "SUB_*", "claimed": ["SUB_*", ...]}} | null,
+    "resin_system": "MAT_*" | null,
+    "additives": ["MAT_*", ...] | null,
+    "process": [{{"step": "PROC_*", "condition": "..."}}, ...] | null,
+    "test_method": "TEST_*" | null,
+    "test_condition": {{"film_thickness": "...", "curing_condition": "...", "dosage": "..."}} | null,
+    "example_id": "<sample id, e.g. 'E1' / 'I1' / 'A1B1' / '12'>" | null
+  }},
+  "facts": [
+    {{
+      "property": "PROP_*",
+      "source_section_type": "TABLE" | "FIGURE" | "TABLE_CAPTION_FOOTNOTE" | "FIGURE_CAPTION_FOOTNOTE",
+      "polarity_hint": "positive" | "negative" | "unknown",
+      "example_id": "<bare sample id, e.g. 'E1' / 'I1' / 'C2' / 'A1B1' / '5'>" | null,
+      "evidence_pointer": {{
+        "page": <int>, "region_id": "<e.g. Table 5>",
+        "row": "<row label, AS PRINTED — preserve original>",
+        "column": "<column label, AS PRINTED>",
+        "cell": "<cell text>"
+      }},
+      "extraction_confidence": 0.0–1.0,
+      "result_value": <float>,
+      "result_value_text": "<as-printed e.g. '78.4 GU'>",
+      "baseline_value": <float>,
+      "baseline_value_text": "<as-printed>",
+      "comparison_group": "F_*",
+      "claimed_in_claims": <bool>,
+
+      "application": "APP_*",
+      "substrate": {{"tested": "SUB_*", "claimed": ["SUB_*"]}},
+      "resin_system": "MAT_*",
+      "additives": ["MAT_*"],
+      "process": [{{"step": "PROC_*", "condition": "..."}}],
+      "test_method": "TEST_*",
+      "test_condition": {{"film_thickness": "...", "curing_condition": "...", "dosage": "..."}}
+    }}
+  ],
+  "proposed_canonicals": [
+    {{
+      "kind": "MAT" | "PROP" | "APP" | "SUB" | "PROC" | "TEST",
+      "sub_type": "<sub-category for MAT/PROP/APP/SUB; '' for PROC/TEST>",
+      "proposed_id": "<TYPE_lowercase_underscored, unique>",
+      "canonical_name": "<plain English name>",
+      "source_text": "<short quote from the table/paragraph>",
+      "confidence": "high" | "medium" | "low"
+    }}
+  ],
+  "coverage": {{
+    "role_counts": {{
+      "RESULT_PROPERTY": 0,
+      "FORMULATION_CONTEXT": 0,
+      "PROCESS_CONDITION": 0,
+      "TEST_CONDITION": 0,
+      "IDENTIFIER": 0,
+      "NON_DATA": 0
+    }},
+    "expected_result_cells": 0,
+    "result_cells_extracted": 0,
+    "notes": "<short note on skipped rows, OCR damage, partial extraction, or why formulation cells are context>"
+  }}
+}}
+
+CORE EXTRACTION RULES
+=====================
+
+1. **Evidence rule.** Every fact's primary value (cell content, plot point,
+   caption sentence) must come from the TABLE or FIGURE itself. The MATCHED
+   PARAGRAPHS below are CONTEXT — use them to FILL optional slots
+   (process / test_method / substrate / resin_system / additives / dosage)
+   — but DO NOT emit a fact whose only support is a paragraph sentence.
+
+1b. **Cell role first, then fact extraction.**
+   Before emitting facts, classify each meaningful table cell/row/column into
+   exactly one semantic role:
+
+     RESULT_PROPERTY      = measured outcome, evaluation result, rating, score,
+                            pass/fail, yield, particle size, adhesion, gloss,
+                            haze, corrosion, scribe creep, blistering, flame
+                            test result, scratch, contact angle, MEK rubs, etc.
+     FORMULATION_CONTEXT  = material amount, wt%, pbw, phr, ratio, component
+                            dosage, feed composition, resin/additive quantity.
+     PROCESS_CONDITION   = temperature, time, pH, curing, mixing, deposition,
+                            recycle/depolymerization process settings.
+     TEST_CONDITION      = standard, substrate, exposure, panel, replicate
+                            position, scale definition, measurement geometry.
+     IDENTIFIER          = example/run/sample/formulation id.
+     NON_DATA            = header, blank, separator, unit label, footnote marker,
+                            "not measured" structural cell.
+
+   Emit facts for RESULT_PROPERTY cells. Attach FORMULATION_CONTEXT,
+   PROCESS_CONDITION, TEST_CONDITION, and IDENTIFIER cells as context on the
+   related facts; do not count them as missing property facts.
+
+   Performance rows such as "Surface (film)", "Surface (metal)",
+   "Small flame test", "rating 1-6", "visual assessment", "corrosion rating",
+   "adhesion class", "pass", "fail", "5B", "OK", and "n.d." are RESULT_PROPERTY
+   when they are evaluation outputs. They MUST be extracted as property facts,
+   even when the value is qualitative or an ordinal score.
+
+   Rating scales are method-specific. Preserve the printed scale in
+   result_value_text or test_condition. Do NOT normalize a bare "1-6" score
+   unless the table/caption/paragraph states whether high or low is better.
+
+1c. **Semantic coverage report.**
+   In the top-level ``coverage`` object:
+     - ``expected_result_cells`` counts only RESULT_PROPERTY cells that should
+       produce facts.
+     - ``result_cells_extracted`` counts RESULT_PROPERTY cells represented by
+       emitted facts.
+     - FORMULATION_CONTEXT / PROCESS_CONDITION / TEST_CONDITION / IDENTIFIER /
+       NON_DATA cells are excluded from the denominator and summarized in
+       ``role_counts`` / ``notes``.
+   If a table is mainly a formulation table with one result column, the
+   denominator is the result column, not every ingredient amount.
+
+1d. **Confidence rubric.**
+   Use ``extraction_confidence`` as calibrated QA metadata, not a default
+   self-approval score:
+     >=0.95: value, property, row/column mapping, scale, and context are clear.
+     0.85-0.94: value/property clear, with only minor missing context.
+     0.70-0.84: OCR/header noise, inferred property label, or incomplete
+                row-specific context.
+     0.50-0.69: significant inference, no matched paragraph support, or
+                uncertain method/scale.
+     <0.50: candidate fact requiring review.
+
+   Caps: no matched paragraphs -> <=0.85; OCR damage in row/column/property
+   -> <=0.80; row-specific condition omitted -> <=0.80; only a subset of
+   result rows extracted -> <=0.75; proposed canonical -> <=0.85 unless the
+   source text makes the mapping obvious.
+
+2. **Canonical IDs — propose-and-curate, NOT hard match.**
+   The lists below are SEED REFERENCE, not a closed checklist. Pick the
+   right ID for each slot using these priorities:
+
+   (a) If a seed ID is a PRECISE semantic match → use it.
+       e.g. "20° gloss" → ``PROP_gloss_20deg``  (use seed)
+
+   (b) If the entity is REAL but no seed ID precisely matches → PROPOSE
+       a new ID via ``proposed_canonicals`` AND use that proposed_id in
+       the fact. The system routes proposed-ID facts to a curation queue
+       where a human approves / rejects.
+       e.g. "Defoamer" → propose ``MAT_defoamer_generic`` (sub_type=Additive)
+
+   (c) NEVER stretch a seed ID to cover an entity it does not actually
+       describe. Specifically:
+       - DO NOT pick ``MAT_acrylic_resin`` for a defoamer / catalyst /
+         wetting agent / matting agent. They are not acrylic resins.
+       - DO NOT collapse two different specific components onto one
+         seed ID just because the seed has nothing better
+         (e.g. ``PAC1`` and ``PAC2`` are two distinct components — propose
+         two separate IDs).
+       - DO NOT add suffixes like ``_horizontal`` / ``_dry`` /
+         ``_vertical`` to a seed ID. Position / direction info goes into
+         ``evidence_pointer.column``.
+       - Sample / formulation identifiers (``C1B1``, ``Example E4``,
+         ``I1``) are NOT materials. They are sample names. Do not use
+         them as ``resin_system``.
+
+   (d) When proposing, follow the naming convention
+       ``<TYPE>_<descriptor>_<lowercase_underscored>``.
+       Pick a name SPECIFIC enough to disambiguate:
+         "PAC1, an acrylic polyol" → ``MAT_PAC1_acrylic_polyol``
+         "Cathoguard 800 electrocoat" → ``MAT_cathoguard_800_electrocoat``
+         "DLT directional uniformity (h vs v)" → ``PROP_film_thickness_directional_uniformity``
+
+   (e) ``confidence`` on a proposal:
+         "high"   — the entity name is unambiguous and chemistry obvious
+         "medium" — chemistry inferred from context
+         "low"    — proposing because no fit exists, but unsure
+
+   (f) **sub_type is a CLOSED enumeration. NEVER invent new sub_types.**
+       The 7 MAT sub_types are:
+         Resin / binder, Crosslinker / Curing agent, Pigment, Filler,
+         Additive, Solvent, Monomer
+       The 4 SUB sub_types are: Metal, Plastic, Mineral, (and we accept
+       coatings on cementitious / mineral substrates as Mineral).
+       The 4 APP sub_types are: Automotive, Industrial protective,
+       Specialty, Architectural.
+
+       If you encounter a material/substrate/application that doesn't
+       cleanly map, pick the SEMANTICALLY CLOSEST existing sub_type using
+       chemical / functional analogy. Examples (apply same reasoning to
+       any unfamiliar entity):
+
+         Material analogies:
+           Dye / colorant         → Pigment       (both color the film)
+           Surfactant / wetter    → Additive       (formulation auxiliary)
+           Antifoam / defoamer    → Additive
+           Wax / matting agent    → Additive
+           Catalyst / initiator   → Additive
+           Adhesion promoter      → Additive
+           UV absorber, HALS      → Additive
+           Coupling agent (silane) → Additive
+           Plasticizer            → Additive
+           Diluent / reactive solvent → Solvent
+           Reactive monomer (HEMA, BA, etc.) → Monomer
+           Oligomer / prepolymer  → Resin / binder
+           Hardener (epoxy / amine) → Crosslinker / Curing agent
+           Inorganic filler (CaCO3, talc, SiO2) → Filler
+
+         Substrate analogies:
+           Cotton / textile / paper → Plastic     (organic substrate)
+           Wood                     → Plastic
+           Concrete / cement / stone → Mineral
+           Glass                    → Mineral
+
+       ANTI-PATTERN: do NOT propose sub_type="Dye" / "Surfactant" /
+       "Wax" / "Textile" — these are NOT in ALLOWED_SUB_TYPES, the
+       pipeline will reject and your propose will land in the wrong CSV
+       column. Always squeeze into one of the 7 / 4 / 4 buckets above.
+
+3. ``source_section_type`` must match where ``result_value`` lives:
+   TABLE row → TABLE; figure caption sentence → FIGURE_CAPTION_FOOTNOTE; etc.
+
+4. ``additives`` is a JSON list. ``process`` is an ORDERED list.
+
+5. If ``result_value`` is set but no test_method (seed or paragraph) names
+   the standard, leave ``test_method=null`` — do not guess.
+
+5b. **COMPOUND CELL RULE** (V1.2.5):
+    If a cell contains BOTH a numeric value AND a qualitative descriptor
+    in the same string (e.g., "7.91 Hazy", "5.30 Clear", "OK 4B"):
+      → result_value = the numeric portion (e.g., 7.91)
+      → result_value_text = the FULL original cell text (e.g., "7.91 Hazy")
+      → emit ONE fact (qualitative info preserved in result_value_text)
+
+    Examples:
+      cell "7.91 Hazy"   → result_value=7.91, result_value_text="7.91 Hazy"
+      cell "5.30 Clear"  → result_value=5.30, result_value_text="5.30 Clear"
+      cell "OK 4B"       → result_value=null, result_value_text="OK 4B"
+                            (no numeric — both are qualitative)
+      cell "Pass 5/5"    → result_value=5.0, result_value_text="Pass 5/5"
+                            (5/5 is the numeric; "Pass" is the qualitative
+                             summary)
+
+    DO NOT split into two facts. The compound cell describes ONE
+    measurement with multiple representations.
+
+5c. **EMPTY CELL RULE** (V1.2.5):
+    If a row has empty cell across all measurement columns (e.g., a
+    header row, separator row, or a row with no data):
+      → DO NOT emit any fact for that row.
+    Empty cells indicate non-data structure (decorative or organizational),
+    not measurement. The pipeline will reject empty-cell facts as noise.
+
+6. ``polarity_hint``: positive for inventive examples, negative for
+   comparative examples, unknown otherwise.
+
+7. **Unit-level vs per-fact fields — TOKEN BUDGET RULE.**
+   Before emitting any fact, decide for EACH of these fields whether it is
+   the same for every row in this unit:
+
+       application / substrate / resin_system / additives /
+       process / test_method / test_condition / example_id
+
+   If a field is identical across all rows → put it ONCE in
+   ``unit_context``, OMIT from each fact entirely (do NOT emit
+   ``"resin_system": null`` — just leave the key out).
+   If a field genuinely varies per row (typical in a formulation table
+   where every row picks a different ingredient) → emit it on the fact,
+   leave the corresponding ``unit_context`` field null.
+
+   **OMIT-NULLS RULE**: Never emit ``"<field>": null`` on a fact. If you
+   don't have a value for a field, just don't include the key. This alone
+   saves ~30% of output bytes.
+
+   WORKED EXAMPLES:
+     • Property test table (e.g. 6 metrics × 3 columns × 2 polarities = 36
+       cells, all on the SAME coated panel made from ONE formulation):
+       ``unit_context`` carries application + substrate + resin_system +
+       additives + process + test_condition; each fact only carries
+       fact_id + property + polarity_hint + evidence_pointer + result_value
+       + result_value_text + extraction_confidence + claimed_in_claims.
+     • Formulation table (e.g. 12 ingredient rows × 2 columns = 24 cells,
+       each row a different chemical): ``unit_context`` carries application
+       only; each fact carries its own resin_system OR additives entry
+       depending on which row it is.
+
+   FAILURE MODE TO AVOID #1: repeating a 4-step process[] in every fact
+   will blow the 8192-token output budget around fact #15. Already lost
+   24/36 cells of one table this way.
+
+   FAILURE MODE TO AVOID #2: emitting ``"resin_system": "MAT_X"`` and
+   ``"additives": ["MAT_Y"]`` on every fact when the values are constant
+   across the whole unit. Move them into ``unit_context``.
+
+   FAILURE MODE TO AVOID #3: emitting all fields as explicit ``null``.
+   Adds ~200 bytes per fact for zero information gain.
+
+8. **example_id — emit the literal sample identifier per fact.**
+
+   ``example_id`` is just the cleaned SAMPLE ID, with original prefix
+   letters preserved. polarity stays in ``polarity_hint`` (single source).
+
+   Output format: a short string OR null. Do NOT add any new prefix
+   like "E_" / "C_" — keep the patent's own literal id.
+
+     "Example 1"            → "E1"          (matches existing E\d format)
+     "Comparative Example 2" → "C2"
+     "Beispiel 3"           → "E3"
+     "Vergleichsbeispiel 4" → "C4"
+     "实施例 5"             → "E5"
+     "对比例 6"             → "C6"
+     "C1B1"                 → "C1"          (drop sub-code B1, keep main)
+     "I1B1"                 → "I1"          (KEEP I — do not fold to E)
+     "CC-A1B1 (inventive)"  → "A1B1"        (drop product-line prefix CC-,
+                                              keep multi-char sample id)
+     "PC-B3 (comparative)"  → "B3"
+     "Run 5"                → "5"           (no semantic prefix, bare id ok)
+     "Sample A-3"           → "A3"
+
+   DISCRIMINATING RULE (apply when example pattern is ambiguous):
+
+     • If id contains a HYPHEN: "PREFIX-SAMPLE_ID"
+         → drop everything before the hyphen (it's a product-line code)
+         → keep everything after the hyphen literally
+         examples: CC-A1B1 → A1B1, PC-B3 → B3, Sample-A3 → A3
+
+     • If id has NO hyphen and starts with [CIE]: "[CIE]<digits>[<letter><digits>]"
+         → main = first letter + immediately following digits
+         → sub-code = anything after that (a letter+digits group); drop it
+         examples: C1B1 → C1, I1B1 → I1, C12B1 → C12,
+                   I22A3 → I22 (main = I22, sub-code A3 dropped)
+
+     • If id has NO hyphen and starts with multi-letter prefix
+       (CC1B1 / MA1 / etc): treat the whole letter run as a product-line
+       prefix and split at the first digit boundary, then apply the
+       hyphenless rule to the remainder.
+         examples: CC1B1 → 1, MA1 → 1 (these are usually generic product
+                   codes; the digit suffix is the sample id)
+
+   LADDER / SUB-STEP TABLES (tables nested under ONE parent example):
+     If the unit caption identifies one parent example
+     ("Neutralization Ladder Example 12") and rows are ladder steps:
+       → all facts share example_id = "E12" (parent's id, not the step)
+       → put example_id in ``unit_context.example_id`` ONCE (TOKEN BUDGET)
+
+   BARE-NUMBER FALLBACK:
+     row/col is just a digit → only use as example_id if VLM description
+     or caption confirms an "Examples 1-N" framing. If silent, emit null.
+
+   POLARITY:
+     polarity_hint independently captures inventive (positive) /
+     comparative (negative) / unknown. Don't try to encode polarity in
+     example_id — Stage 9 joins the two. If I1 vs E1 are DIFFERENT
+     samples in the same patent, keep both literal — they ARE different
+     example_ids.
+
+   NULL POLICY:
+     Don't guess. If no signal links this cell to any example, emit null.
+     Pipeline routes null-example facts to a review queue.
+
+FEW-SHOT EXAMPLES (study these — they show the propose-vs-seed decision)
+========================================================================
+
+EXAMPLE A — seed ID fits precisely. USE seed.
+  Table cell: "20° gloss after Amtec, Example E4: 78.4 GU"
+  → property = "PROP_gloss_20deg"  (seed fits — DO NOT propose a variant)
+
+EXAMPLE B — entity is more specific than any seed. PROPOSE new.
+  Table row: "PAC1, an organic-solvent-borne acrylic polyol dispersion, 25.00 wt.-%"
+  → propose: {{kind: "MAT", sub_type: "Resin / binder",
+              proposed_id: "MAT_PAC1_acrylic_polyol_dispersion",
+              canonical_name: "PAC1 — acrylic polyol dispersion",
+              source_text: "PAC1 ... acrylic polyol dispersion 25.00 wt.-%",
+              confidence: "high"}}
+  → fact.resin_system = "MAT_PAC1_acrylic_polyol_dispersion"
+  Why NOT use ``MAT_acrylic_resin``? Too generic — collapses PAC1, PAC2,
+  and any other specific acrylic to the same ID. Loses information.
+
+EXAMPLE C — entity belongs to a category but no seed exists. PROPOSE.
+  Table row: "Defoamer, 0.05 wt.-%"
+  → propose: {{kind: "MAT", sub_type: "Additive",
+              proposed_id: "MAT_defoamer_generic",
+              canonical_name: "defoamer (generic, unspecified chemistry)",
+              source_text: "Defoamer 0.05",
+              confidence: "medium"}}
+  → fact.additives = ["MAT_defoamer_generic"]
+  Why NOT use ``MAT_acrylic_resin``? A defoamer is not an acrylic resin
+  — wrong category entirely.
+
+EXAMPLE D — nested property tables (rowspan polarity + property sub-rows).
+  Real BASF table layout:
+
+      ┌───────────────────────────┬─────────────────┬──── columns ────┐
+      │                           │ Measurement     │ left │ central │ right │
+      ├───────────────────────────┼─────────────────┼─────┼─────────┼──────┤
+      │                           │ DLT h [um]      │  59 │   61    │  62  │
+      │                           │ G (60°) h       │  33 │   34    │  33  │
+      │ Substrate with C1B1 as    │ DLT v [um]      │  49 │   49    │  49  │
+      │ clearcoat (comparative)   │ G (60°) v       │  20 │   20    │  21  │
+      │ ← rowspan=6               │ dG (h-v)        │  13 │   14    │  12  │
+      │                           │ dDLT (h-v) [um] │  10 │   12    │  13  │
+      ├───────────────────────────┼─────────────────┼─────┼─────────┼──────┤
+      │ ... I1B1 inventive same shape ...                                  │
+      └───────────────────────────────────────────────────────────────────┘
+
+  CRITICAL: the rowspan parent ("Substrate with C1B1...") is a POLARITY
+  CONTEXT, NOT the row label of each measurement. Encode it ONLY in
+  polarity_hint (negative for comparative, positive for inventive).
+  The differentiating row label for each measurement is the SECOND COLUMN
+  ("DLT h [um]", "DLT v [um]", "dG (h-v)", etc.).
+
+  WRONG (loses h vs v vs diff):
+    36 facts emitted, but F_001 (DLT h, left, 59) and F_007 (DLT v, left, 49)
+    have identical metadata {{ property=PROP_film_thickness, row="Substrate
+    with C1B1...", column="left" }} — they only differ in result_value, so
+    downstream cannot tell horizontal from vertical.
+
+  RIGHT (h / v / diff distinguishable):
+    F_001: property=PROP_film_thickness, polarity=negative,
+           row="DLT h [um]", column="left", result_value=59
+    F_007: property=PROP_film_thickness, polarity=negative,
+           row="DLT v [um]", column="left", result_value=49
+    F_013: propose PROP_gloss_60deg_directional_uniformity (sub_type=Aging),
+           row="dG (h-v)", column="left", result_value=13
+    F_016: propose PROP_film_thickness_directional_uniformity (sub_type=
+           "Application properties"), row="dDLT (h-v)", column="left",
+           result_value=10
+
+  RULE: ``row`` MUST carry the most specific label that identifies THIS
+  measurement (typically the table's second column or the sub-row text).
+  Do NOT use the rowspan parent's text as ``row``.
+
+  RULE: positional info that is NOT semantic (left/central/right replicate
+  measurements at three substrate positions) goes into ``column``. h vs v
+  IS semantic (different application orientations) — it goes into ``row``
+  as part of the row label, NOT into column.
+
+  RULE: derived/difference rows like "dG (h-v)" or "dDLT (h-v)" are
+  separate properties — propose new IDs (sub_type="Application properties"
+  or "Aging / Corrosion / Durability" depending on what they measure).
+
+EXAMPLE E — a brand-new test method. PROPOSE.
+  Footnote: "Adhesion measured per DIN 55654 (10-min interval)"
+  → propose: {{kind: "TEST", sub_type: "",
+              proposed_id: "TEST_DIN_55654",
+              canonical_name: "DIN 55654 adhesion 10-min interval",
+              source_text: "DIN 55654 (10-min interval)",
+              confidence: "high"}}
+  → fact.test_method = "TEST_DIN_55654"
+
+CONTEXT
+-------
+doc_id   : {doc_id}
+unit_id  : {region_id}
+page     : {page}
+type     : {unit_type}
+
+VLM description:
+{vlm_description}
+
+Table HTML / corrected table text (if any):
+source: {table_html_source}
+{extracted_table_html}
+
+Caption + Footnote:
+{caption_footnote_text}
+
+Already-tagged canonical entities (shortlist, may include none):
+{tagged_entities}
+
+MATCHED PARAGRAPHS (Examples-section prose; context only — see rule 1):
+{matched_paragraphs}
+
+CANONICAL ID SEED (reference — propose new when none of these are precise):
+
+APP — applications, by sub-category:
+{canonical_app}
+
+PROP — properties, by sub-category:
+{canonical_prop}
+
+MAT — materials, by sub-category:
+{canonical_mat}
+
+SUB — substrates, by sub-category:
+{canonical_sub}
+
+PROC — process steps (flat):
+{canonical_proc}
+
+TEST — test methods (flat):
+{canonical_test}
