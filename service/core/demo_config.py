@@ -53,7 +53,7 @@ KG_HYBRID_SEARCH_URL = os.environ.get(
     "http://127.0.0.1:18021/tools/kg.hybrid_search",
 )
 KG_HYBRID_SEARCH_TIMEOUT_SECONDS = int(os.environ.get("KG_HYBRID_SEARCH_TIMEOUT_SECONDS", "60"))
-KG_HYBRID_DEFAULT_TOP_K = int(os.environ.get("KG_HYBRID_TOP_K", "20"))
+KG_HYBRID_DEFAULT_TOP_K = int(os.environ.get("KG_HYBRID_TOP_K", "50"))
 KG_HYBRID_DEFAULT_CANDIDATE_K = int(os.environ.get("KG_HYBRID_CANDIDATE_K", "100"))
 KG_SQL_AGGREGATE_URL = os.environ.get(
     "KG_SQL_AGGREGATE_URL",

@@ -13,16 +13,14 @@ The API service owns routing, doc-scope memory, planner orchestration, model
 calls, and compact API responses. The KG tools service owns hybrid search,
 hyperedge multi-hop expansion, and template SQL aggregation.
 
-## Example deployment setup
+## Setup On A100
 
 ```bash
-cd service
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+cd /opt/coat-weave/service
+/opt/coat-weave/.venv/bin/python -m pip install -r requirements.txt
 cp config/.env.example .env
-# edit .env with your own token, model key, Postgres DSN, Redis URL, and allowed IPs
-python scripts/init_db.py
+# edit .env with the real token, DeepSeek key, Postgres DSN, Redis URL, and allowed IPs
+/opt/coat-weave/.venv/bin/python scripts/init_db.py
 cp systemd/coating-api.service /etc/systemd/system/
 cp systemd/coating-kg-tools.service /etc/systemd/system/
 systemctl daemon-reload
@@ -32,8 +30,8 @@ systemctl enable --now coating-kg-tools.service coating-api.service
 ## Smoke
 
 ```bash
-cd service
-python scripts/smoke_test.py \
+cd /opt/coat-weave/service
+/opt/coat-weave/.venv/bin/python scripts/smoke_test.py \
   --base-url http://127.0.0.1:8031 \
   --token "$COATING_API_TOKEN"
 ```
@@ -72,10 +70,10 @@ POST /api/ask/stream/chat/completions
 Content-Type: application/json
 ```
 
-Example reverse-proxy URL:
+Public nginx URL:
 
 ```text
-https://example.org/api/ask/stream/chat/completions
+https://example.com/api/ask/stream/chat/completions
 ```
 
 Request shape:

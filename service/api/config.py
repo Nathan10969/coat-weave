@@ -7,7 +7,7 @@ from typing import Mapping
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_A100_ROOT = SERVICE_ROOT
+DEFAULT_A100_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_env_file(path: Path, target: dict[str, str]) -> None:

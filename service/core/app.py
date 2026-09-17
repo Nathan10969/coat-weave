@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
-import re
 import time
 import urllib.request
-from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -15,6 +12,7 @@ from answering import (
     build_model_messages,
     call_qwen,
     extract_stream_delta_text,
+    gate_tool_observations_for_answer,
     local_mock_answer,
     provider_config,
     provider_headers,
@@ -41,7 +39,7 @@ from demo_config import (
     TOOL_OBSERVATIONS,
     TOOL_ROUTING,
 )
-from demo_storage import append_jsonl, now_iso, read_json, read_jsonl, write_json, write_jsonl
+from demo_storage import append_jsonl, now_iso, read_json, read_jsonl, write_json
 from demo_text import (
     clamp_int,
     extract_doc_ids,
@@ -90,61 +88,11 @@ from scope_state import (
     save_scope_state,
     scope_applies_to_kg_search,
 )
-from routing import (
-    AGGREGATE_INTENTS,
-    AGGREGATE_TARGETS,
-    CORROSION_EXPANSION_TERMS,
-    DOC_FIELD_SCAN_GROUPS,
-    aggregate_context_question,
-    aggregate_filters_for_question,
-    aggregate_group_by_for_question,
-    analyze_kg_query_semantics,
-    append_unique_terms,
-    apply_scope_to_route,
-    available_tools_for_router,
-    build_aggregate_call,
-    build_kg_search_queries,
-    build_kg_search_query,
-    clarify_scope_route,
-    coating_scope_topic,
-    contains_any,
-    doc_field_scan_route,
-    missing_doc_scope_route,
-    extract_json_object,
-    fallback_tool_routing,
-    infer_aggregate_intent,
-    infer_aggregate_target,
-    infer_plan_type,
-    kg_expand_top_k_for_question,
-    kg_search_only_requested,
-    resolve_scope,
-    route_tools,
-    route_tools_with_qwen,
-    sanitize_tool_routing,
-    scoped_kg_search_route,
-    should_use_doc_field_scan,
-    should_force_scoped_kg_search,
-    total_count_followup,
-    unresolved_doc_local_reference,
-    wants_coating_kg_search,
-    wants_kg_aggregate,
-    wants_web_search,
-)
 from tool_clients import (
-    DuckDuckGoLiteParser,
-    brave_web_search,
-    current_weather,
-    duckduckgo_web_search,
-    github_recent_high_star_repos,
-    infer_recent_days,
-    infer_weather_location,
     kg_doc_field_scan,
     kg_expand_hyperedge_multihop,
     kg_hybrid_search,
     kg_sql_aggregate,
-    wants_github_recent_repo_search,
-    wants_weather,
-    web_search,
 )
 from tool_runtime import (
     filter_search_result_by_doc_scope,
@@ -178,6 +126,8 @@ def build_packet(question: str) -> dict[str, Any]:
         for row in tool_observations
         if not (current_turn_id and row.get("turn_id") == current_turn_id)
     ][-5:]
+    current_tool_observations = gate_tool_observations_for_answer(current_tool_observations)
+    recent_tool_observations = gate_tool_observations_for_answer(recent_tool_observations)
     active = [m for m in memories if m.get("status", "active") == "active"]
     stale = [m for m in memories if m.get("status") in {"stale", "superseded"}]
     summary = read_json(SUMMARY, {})

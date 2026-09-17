@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import os
 import queue
 import sys
@@ -154,9 +153,10 @@ class LegacyRuntime:
         for row in rows:
             if row.get("id") in {
                 "mem_project_constraint_single_chat",
+                "mem_workflow_agentmemory_borrow",
                 "mem_user_preference_chinese",
                 "mem_provider_openai_compatible_env",
-            }:
+            } and row.get("status") != "superseded":
                 row["status"] = "superseded"
                 changed = True
         if not any(row.get("id") == "mem_project_constraint_platform_api" for row in rows):
@@ -217,11 +217,18 @@ class LegacyRuntime:
         existing_provider = next((row for row in rows if row.get("id") == "mem_provider_platform_env"), None)
         if existing_provider:
             created_at = existing_provider.get("created_at") or provider_memory["created_at"]
-            existing_provider.update(provider_memory)
-            existing_provider["created_at"] = created_at
+            volatile_keys = {"created_at", "last_confirmed_at"}
+            if any(
+                existing_provider.get(key) != value
+                for key, value in provider_memory.items()
+                if key not in volatile_keys
+            ):
+                existing_provider.update(provider_memory)
+                existing_provider["created_at"] = created_at
+                changed = True
         else:
             rows.append(provider_memory)
-        changed = True
+            changed = True
         if changed:
             self.demo_storage.write_jsonl(self.demo_config.DURABLE, rows)
 
@@ -245,6 +252,8 @@ class LegacyRuntime:
             for row in tool_observations
             if not (current_turn_id and row.get("turn_id") == current_turn_id)
         ][-5:]
+        current_tool_observations = self.answering.gate_tool_observations_for_answer(current_tool_observations)
+        recent_tool_observations = self.answering.gate_tool_observations_for_answer(recent_tool_observations)
         active = [m for m in memories if m.get("status", "active") == "active"]
         stale = [m for m in memories if m.get("status") in {"stale", "superseded"}]
         summary = read_json(self.demo_config.SUMMARY, {})
@@ -630,7 +639,7 @@ class CoatingConversationEngine:
                 error = str(exc)
                 if diag:
                     diag.event("stream_request_exception", error=error)
-                message = f"Streaming request failed: {exc}"
+                message = "[流式响应异常，已中止。可重试或换个问法。]"
                 enqueue_client_event({"type": "delta", "content": message, "model": model})
                 enqueue_terminal_event({"type": "done", "provider": "coating-api-error", "model": model})
             finally:
@@ -664,6 +673,7 @@ class CoatingConversationEngine:
                 str(payload.get("query") or ""),
                 top_k=payload.get("top_k"),
                 candidate_k=payload.get("candidate_k"),
+                offset=payload.get("offset") or 0,
                 filters=payload.get("filters"),
             )
         if name == "kg.expand_hyperedge_multihop":
@@ -722,6 +732,10 @@ def _extract_citations(tool_observations: list[dict[str, Any]]) -> list[dict[str
     for obs in tool_observations:
         result = obs.get("result") or {}
         if obs.get("tool") == "kg.expand_hyperedge_multihop":
+            if obs.get("status") != "ok" or result.get("status") != "ok":
+                continue
+            if (result.get("evidence_gate") or {}).get("status") != "verified":
+                continue
             for item in result.get("items") or []:
                 for ev in item.get("evidence") or []:
                     citations.append(

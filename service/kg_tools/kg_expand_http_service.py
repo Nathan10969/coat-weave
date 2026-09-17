@@ -24,19 +24,20 @@ import expand_hyperedge_multihop as expand  # noqa: E402
 HOST = os.environ.get("KG_EXPAND_HOST", "0.0.0.0")
 PORT = int(os.environ.get("KG_EXPAND_PORT", "8021"))
 AUTH_TOKEN = os.environ.get("KG_EXPAND_TOKEN", "").strip()
-MAX_OBJECT_IDS = int(os.environ.get("KG_EXPAND_MAX_OBJECT_IDS", "20"))
+MAX_OBJECT_IDS = int(os.environ.get("KG_EXPAND_MAX_OBJECT_IDS", "30"))
 MAX_QUOTE_CHARS = int(os.environ.get("KG_EXPAND_MAX_QUOTE_CHARS", "900"))
 EMBED_URL = os.environ.get("KG_HYBRID_EMBED_URL", "http://127.0.0.1:8010/embed")
 KG_AGGREGATE_DIR = Path(
     os.environ.get(
         "KG_AGGREGATE_DIR",
-        str(getattr(expand, "DEFAULT_KG_DIR", Path(__file__).resolve().parents[1] / "runtime_data" / "kg_aggregate")),
+        str(getattr(expand, "DEFAULT_KG_DIR", Path(__file__).resolve().parents[1] / "data" / "kg_aggregate")),
     )
 )
+KG_SOURCE_MANIFEST_PATH = Path(os.environ["KG_SOURCE_MANIFEST"]) if os.environ.get("KG_SOURCE_MANIFEST") else None
 RETRIEVAL_CONFIG_PATH = Path(
     os.environ.get(
         "KG_HYBRID_CONFIG",
-        str(Path(__file__).resolve().parents[1] / "config" / "hyperedge_retrieval.json"),
+        str(Path(__file__).resolve().parents[1] / "config" / "hyperedge_retrieval_config.json"),
     )
 )
 
@@ -83,6 +84,9 @@ AGGREGATE_TARGETS = {
     "formulation",
 }
 MATERIAL_ROLES = ("resin", "curing_agent", "pigments", "fillers", "additives", "solvents", "catalysts")
+VALID_MATERIAL_ROLES = frozenset(
+    {"resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"}
+)
 MAX_AGGREGATE_LIMIT = int(os.environ.get("KG_AGGREGATE_MAX_LIMIT", "200"))
 
 _STORE = None
@@ -94,13 +98,38 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def resolve_kg_sources() -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+def resolve_kg_sources() -> tuple[tuple[expand.KgDirectorySource, ...], tuple[Path, ...]]:
+    if KG_SOURCE_MANIFEST_PATH is not None:
+        return load_kg_source_manifest(KG_SOURCE_MANIFEST_PATH), ()
     if KG_AGGREGATE_DIR.exists():
-        return (KG_AGGREGATE_DIR,), ()
+        return (expand.KgDirectorySource(KG_AGGREGATE_DIR),), ()
     default_dir = getattr(expand, "DEFAULT_KG_DIR", None)
     if isinstance(default_dir, Path) and default_dir.exists():
-        return (default_dir,), ()
+        return (expand.KgDirectorySource(default_dir),), ()
     return (), tuple(expand.DEFAULT_KG_ZIPS)
+
+
+def load_kg_source_manifest(path: Path) -> tuple[expand.KgDirectorySource, ...]:
+    if not path.is_file():
+        raise FileNotFoundError(f"KG source manifest not found: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("sources"), list):
+        raise ValueError(f"KG source manifest must contain a sources list: {path}")
+    sources: list[expand.KgDirectorySource] = []
+    for item in data["sources"]:
+        if not isinstance(item, dict):
+            raise ValueError(f"invalid KG source entry: {item!r}")
+        source_path = Path(str(item.get("root") or "").strip())
+        collection_id = str(item.get("collection_id") or "").strip() or None
+        company = str(item.get("company") or "").strip() or None
+        if not source_path.is_dir():
+            raise FileNotFoundError(f"KG source root not found: {source_path}")
+        if bool(collection_id) != bool(company):
+            raise ValueError(f"collection_id and company must be supplied together: {item!r}")
+        sources.append(expand.KgDirectorySource(source_path, collection_id, company))
+    if not sources:
+        raise ValueError(f"KG source manifest has no sources: {path}")
+    return tuple(sources)
 
 
 def get_store() -> Any:
@@ -386,7 +415,7 @@ def run_expand(request: dict[str, Any]) -> dict[str, Any]:
         object_ids=object_ids,
         db_rows=db_rows,
         store=store,
-        kg_dirs=kg_dirs,
+        kg_dirs=tuple(source.path for source in kg_dirs),
         kg_zips=kg_zips,
         pg_env=expand.DEFAULT_PG_ENV,
         max_context_facts=max_context_facts,
@@ -609,14 +638,13 @@ def normalize_search_filters(raw: Any) -> dict[str, Any]:
     }
     for key, aliases in SEARCH_SOFT_FILTER_ALIASES.items():
         filters[key] = normalize_filter_values(first_present_filter_value(raw, aliases))
+    filters["material_roles"] = normalize_material_role_values(filters.get("material_roles"))
     return filters
 
 
 def normalize_aggregate_filters(raw: Any) -> dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     filters = normalize_search_filters(raw)
-    filters["material_roles"] = normalize_filter_values(raw.get("material_roles"))
-    filters["assignees"] = normalize_filter_values(raw.get("assignees"))
     filters["application_family"] = normalize_filter_values(
         raw.get("application_family") or raw.get("application_families")
     )
@@ -665,22 +693,14 @@ def lower_set(values: list[str]) -> set[str]:
 MARINE_APPLICATION_ALIASES = {
     "marine",
     "marine_antifouling",
-    "marine antifouling",
     "ship_hull",
-    "ship hull",
     "vessel_hull",
-    "vessel hull",
     "boat_hull",
-    "boat hull",
     "yacht_hull",
-    "yacht hull",
     "underwater_structure",
     "underwater structures",
-    "underwater_structure",
     "fixed_marine_structure",
-    "fixed marine structure",
     "marine_vessel_hull",
-    "marine vessel hull",
     "fouling_release_marine",
     "marine foul release coating",
     "marine biofouling control",
@@ -761,34 +781,11 @@ def append_structured_values(out: list[Any], value: Any) -> None:
         out.append(text)
 
 
-def canonical_ids_from_value(value: Any) -> list[str]:
-    ids: list[str] = []
-    if isinstance(value, dict):
-        for key in ("canonical_id", "node_id", "id", "standard_id"):
-            append_structured_values(ids, value.get(key))
-        return [str(item).strip() for item in ids if str(item).strip()]
-    if isinstance(value, str):
-        text = value.strip()
-        if text:
-            return [text]
-    return []
-
-
-def expand_canonical_values(values: list[Any], canonical_map: dict[str, dict[str, Any]]) -> list[Any]:
+def expand_canonical_values(values: list[Any]) -> list[Any]:
     out: list[Any] = []
     seen: set[str] = set()
     for value in values:
         expanded: list[Any] = [value]
-        for canonical_id in canonical_ids_from_value(value):
-            entity = canonical_map.get(canonical_id)
-            if not entity:
-                continue
-            append_structured_values(expanded, entity.get("canonical_id"))
-            append_structured_values(expanded, entity.get("node_id"))
-            append_structured_values(expanded, entity.get("canonical_name"))
-            append_structured_values(expanded, entity.get("name"))
-            append_structured_values(expanded, entity.get("label"))
-            append_structured_values(expanded, entity.get("aliases"))
         for item in expanded:
             text = str(item).strip() if item is not None else ""
             key = normalize_match_text(text)
@@ -798,7 +795,7 @@ def expand_canonical_values(values: list[Any], canonical_map: dict[str, dict[str
     return out
 
 
-def collect_record_filter_values(record: dict[str, Any], filter_key: str, canonical_map: dict[str, dict[str, Any]]) -> list[Any]:
+def collect_record_filter_values(record: dict[str, Any], filter_key: str) -> list[Any]:
     config = AGGREGATE_FIELD_FILTER_CONFIG[filter_key]
     keys = config["keys"]
     values: list[Any] = []
@@ -817,7 +814,7 @@ def collect_record_filter_values(record: dict[str, Any], filter_key: str, canoni
     context_fields = record.get("context_fields")
     if isinstance(context_fields, dict):
         append_structured_values(values, context_fields.get(config["context_field"]))
-    return expand_canonical_values(values, canonical_map)
+    return expand_canonical_values(values)
 
 
 def associated_records(raw: dict[str, Any], key: str, record_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -840,18 +837,17 @@ def aggregate_filter_values(
     filter_key: str,
     facts_map: dict[str, dict[str, Any]],
     evidence_map: dict[str, dict[str, Any]],
-    canonical_map: dict[str, dict[str, Any]],
 ) -> list[Any]:
-    values = collect_record_filter_values(raw, filter_key, canonical_map)
+    values = collect_record_filter_values(raw, filter_key)
     for record in embedded_records(raw, "facts", "fact_records"):
-        values.extend(collect_record_filter_values(record, filter_key, canonical_map))
+        values.extend(collect_record_filter_values(record, filter_key))
     for record in embedded_records(raw, "evidence", "evidence_units"):
-        values.extend(collect_record_filter_values(record, filter_key, canonical_map))
+        values.extend(collect_record_filter_values(record, filter_key))
     for record in associated_records(raw, "fact_ids", facts_map):
-        values.extend(collect_record_filter_values(record, filter_key, canonical_map))
+        values.extend(collect_record_filter_values(record, filter_key))
     for record in associated_records(raw, "evidence_ids", evidence_map):
-        values.extend(collect_record_filter_values(record, filter_key, canonical_map))
-    return expand_canonical_values(values, canonical_map)
+        values.extend(collect_record_filter_values(record, filter_key))
+    return expand_canonical_values(values)
 
 
 def raw_field_values(raw: dict[str, Any], *keys: str) -> list[Any]:
@@ -875,14 +871,6 @@ def test_method_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
     else:
         values.extend(raw_field_values(raw, "test_method", "test_methods"))
     return [item for item in (normalize_value_item(value, as_canonical(value, "TEST")) for value in values) if item]
-
-
-def test_standard_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    values = raw_field_values(raw, "test_standard", "test_standards", "standards")
-    method = raw.get("test_method")
-    if isinstance(method, dict):
-        values.extend(raw_field_values(method, "standard_id", "standards"))
-    return [item for item in (normalize_value_item(value, slug_id("TEST", value)) for value in values) if item]
 
 
 def append_unique_values(out: list[str], values: tuple[str, ...] | list[str]) -> None:
@@ -1024,12 +1012,6 @@ def get_facts_map(store: Any) -> dict[str, dict[str, Any]]:
     return {key: (value.get("raw") if isinstance(value.get("raw"), dict) else value) for key, value in rows.items()}
 
 
-def get_canonical_map(store: Any) -> dict[str, dict[str, Any]]:
-    source = store_get(store, "canonical_entities", "canonical_entities_by_id", "entities_by_id", "entities")
-    rows = indexed_rows(source, "canonical_id", "node_id", "id")
-    return {key: (value.get("raw") if isinstance(value.get("raw"), dict) else value) for key, value in rows.items()}
-
-
 def get_patent_map(store: Any) -> dict[str, dict[str, Any]]:
     sources = [
         store_get(store, key)
@@ -1061,6 +1043,72 @@ def get_patent_map(store: Any) -> dict[str, dict[str, Any]]:
                 target = out.setdefault(str(candidate), {})
                 target.update({k: v for k, v in raw.items() if v is not None})
     return out
+
+
+def nested_labels(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        preferred = [value.get(key) for key in ("name", "label", "value", "organization", "company") if value.get(key)]
+        source = preferred or list(value.values())
+        return [label for item in source for label in nested_labels(item)]
+    if isinstance(value, (list, tuple, set)):
+        return [label for item in value for label in nested_labels(item)]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def resolve_assignee_doc_ids(store: Any, assignees: Any) -> list[str]:
+    wanted = lower_set(normalize_filter_values(assignees))
+    if not wanted:
+        return []
+    resolved: set[str] = set()
+    for map_key, patent in get_patent_map(store).items():
+        labels: list[str] = []
+        for key in (
+            "assignee",
+            "assignees",
+            "applicant",
+            "applicants",
+            "current_assignee",
+            "owner",
+        ):
+            labels.extend(nested_labels(patent.get(key)))
+        if not labels or not item_matches_filter({"value": " ; ".join(labels)}, wanted):
+            continue
+        doc_id = str(
+            patent.get("doc_id")
+            or patent.get("patent_id")
+            or patent.get("publication_number")
+            or patent.get("wo_id")
+            or map_key
+        ).strip()
+        if doc_id:
+            resolved.add(doc_id)
+    return sorted(resolved)
+
+
+def apply_hard_search_scopes(store: Any, raw_filters: Any) -> tuple[dict[str, Any], list[str]]:
+    filters = normalize_search_filters(raw_filters)
+    warnings: list[str] = []
+    assignees = filters.get("assignees") or []
+    if not assignees:
+        return filters, warnings
+    resolved = resolve_assignee_doc_ids(store, assignees)
+    if not resolved:
+        filters["doc_ids"] = ["__NO_ASSIGNEE_MATCH__"]
+        warnings.append("assignee_hard_scope_resolved_empty")
+        return filters, warnings
+    explicit = filters.get("doc_ids") or []
+    if explicit:
+        resolved_set = set(resolved)
+        filters["doc_ids"] = [doc_id for doc_id in explicit if doc_id in resolved_set]
+        if not filters["doc_ids"]:
+            filters["doc_ids"] = ["__NO_ASSIGNEE_DOC_INTERSECTION__"]
+            warnings.append("assignee_and_doc_id_hard_scopes_do_not_intersect")
+    else:
+        filters["doc_ids"] = resolved
+    return filters, warnings
 
 
 def as_label(value: Any) -> str | None:
@@ -1113,17 +1161,31 @@ def material_rows(raw: dict[str, Any], role_filter: set[str] | None = None) -> l
 
 
 MATERIAL_ROLE_ALIASES = {
+    "resins": "resin",
     "pigments": "pigment",
     "fillers": "filler",
     "additives": "additive",
     "solvents": "solvent",
     "catalysts": "catalyst",
+    "curing agents": "curing_agent",
+    "curing_agents": "curing_agent",
+    "hardener": "curing_agent",
+    "hardeners": "curing_agent",
 }
 
 
 def normalize_material_role_name(value: Any) -> str:
     text = str(value or "").strip().casefold()
     return MATERIAL_ROLE_ALIASES.get(text, text)
+
+
+def normalize_material_role_values(value: Any) -> list[str]:
+    roles: list[str] = []
+    for item in normalize_filter_values(value):
+        role = normalize_material_role_name(item)
+        if role in VALID_MATERIAL_ROLES and role not in roles:
+            roles.append(role)
+    return roles
 
 
 def material_role_matches_filter(role: Any, role_filter: set[str]) -> bool:
@@ -1322,17 +1384,6 @@ def aggregate_target_values(
             )
             if item
         ]
-    if target == "application":
-        return [
-            item
-            for item in (
-                normalize_value_item(value, as_canonical(value, "APPLICATION"))
-                for value in raw_field_values(raw, "application", "applications")
-            )
-            if item
-        ]
-    if target == "test_standard":
-        return test_standard_items(raw)
     if target == "assignee":
         assignee = patent.get("assignee")
         if assignee is None:
@@ -1395,11 +1446,9 @@ def raw_matches_aggregate_filters(
     filters: dict[str, Any],
     facts_map: dict[str, dict[str, Any]] | None = None,
     evidence_map: dict[str, dict[str, Any]] | None = None,
-    canonical_map: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
     facts_map = facts_map or {}
     evidence_map = evidence_map or {}
-    canonical_map = canonical_map or {}
     doc_ids = set(filters.get("doc_ids") or [])
     if doc_ids and raw_hyperedge_doc_id(raw) not in doc_ids:
         return False
@@ -1433,39 +1482,53 @@ def raw_matches_aggregate_filters(
             return False
     if filters.get("applications"):
         wanted = lower_set(filters["applications"])
-        applications = aggregate_filter_values(raw, "applications", facts_map, evidence_map, canonical_map)
+        applications = aggregate_filter_values(raw, "applications", facts_map, evidence_map)
         if not values_match_filter(applications, wanted):
             return False
     if filters.get("substrates"):
         wanted = lower_set(filters["substrates"])
-        substrates = aggregate_filter_values(raw, "substrates", facts_map, evidence_map, canonical_map)
+        substrates = aggregate_filter_values(raw, "substrates", facts_map, evidence_map)
         if not values_match_filter(substrates, wanted):
             return False
     if filters.get("test_methods"):
         wanted = lower_set(filters["test_methods"])
-        methods = aggregate_filter_values(raw, "test_methods", facts_map, evidence_map, canonical_map)
+        methods = aggregate_filter_values(raw, "test_methods", facts_map, evidence_map)
         if not values_match_filter(methods, wanted):
             return False
     if filters.get("test_standards"):
         wanted = lower_set(filters["test_standards"])
-        standards = aggregate_filter_values(raw, "test_standards", facts_map, evidence_map, canonical_map)
+        standards = aggregate_filter_values(raw, "test_standards", facts_map, evidence_map)
         if not values_match_filter(standards, wanted):
             return False
     return True
 
 
-def fetch_allowed_hyperedge_ids(filters: dict[str, Any], warnings: list[str]) -> set[str] | None:
+def fetch_allowed_hyperedge_keys(filters: dict[str, Any], warnings: list[str]) -> set[tuple[str, str]] | None:
     sql_filters = normalize_search_filters(filters)
     if not any(sql_filters.get(key) for key in ("doc_ids", "properties", "polarity", "example_kind")):
         return None
     try:
         pg_env = expand.load_pg_env(expand.DEFAULT_PG_ENV)
         clauses, params = search_filter_sql("o", sql_filters)
-        sql = f"SELECT o.object_id FROM retrieval_objects o WHERE {' AND '.join(clauses)} ORDER BY o.object_id"
+        sql = f"""
+            SELECT o.doc_id,
+                   COALESCE(
+                       NULLIF(o.metadata->>'raw_hyperedge_id', ''),
+                       NULLIF(o.metadata->>'hyperedge_id', ''),
+                       regexp_replace(o.object_id, '^.*::', '')
+                   ) AS raw_hyperedge_id
+            FROM retrieval_objects o
+            WHERE {' AND '.join(clauses)}
+            ORDER BY o.doc_id, o.object_id
+        """
         with expand.pg_connect(pg_env) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                return {str(row[0]) for row in cur.fetchall() if row and row[0]}
+                return {
+                    (str(doc_id), str(hyperedge_id))
+                    for doc_id, hyperedge_id in cur.fetchall()
+                    if doc_id and hyperedge_id
+                }
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"retrieval_objects filter unavailable; used raw KG filtering only: {exc}")
         return None
@@ -2008,9 +2071,8 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
     store = get_store()
     evidence_map = get_evidence_map(store)
     facts_map = get_facts_map(store)
-    canonical_map = get_canonical_map(store)
     patents = get_patent_map(store)
-    allowed_ids = fetch_allowed_hyperedge_ids(filters, warnings)
+    allowed_keys = fetch_allowed_hyperedge_keys(filters, warnings)
     all_hyperedges = iter_store_hyperedges(store)
     match_filters = dict(filters)
     if aggregate_target == "resin_system":
@@ -2021,9 +2083,9 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
         match_filters["material_roles"] = []
     matched: list[dict[str, Any]] = []
     for raw in all_hyperedges:
-        if allowed_ids is not None and not object_id_candidates(raw).intersection(allowed_ids):
+        if allowed_keys is not None and hyperedge_natural_key(raw) not in allowed_keys:
             continue
-        if raw_matches_aggregate_filters(raw, patents, match_filters, facts_map, evidence_map, canonical_map):
+        if raw_matches_aggregate_filters(raw, patents, match_filters, facts_map, evidence_map):
             matched.append(raw)
 
     if aggregate_target == "resin_system":
@@ -2471,7 +2533,11 @@ def fact_hyperedge_keys(fact: dict[str, Any]) -> set[str]:
     return keys
 
 
-def raw_matches_search_hard_filters(raw: dict[str, Any], filters: dict[str, Any]) -> bool:
+def raw_matches_search_hard_filters(
+    raw: dict[str, Any],
+    filters: dict[str, Any],
+    facts_map: dict[str, dict[str, Any]] | None = None,
+) -> bool:
     doc_ids = set(filters.get("doc_ids") or [])
     if doc_ids and raw_hyperedge_doc_id(raw) not in doc_ids:
         return False
@@ -2486,7 +2552,44 @@ def raw_matches_search_hard_filters(raw: dict[str, Any], filters: dict[str, Any]
             wanted,
         ):
             return False
+    role_filter = lower_set(filters.get("material_roles") or [])
+    if role_filter and not aggregate_material_rows(raw, facts_map, role_filter):
+        return False
     return True
+
+
+def filter_search_items_by_hard_material_roles(
+    items: list[dict[str, Any]],
+    store: Any,
+    filters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not filters.get("material_roles"):
+        return items
+    facts_map = get_facts_map(store)
+    raw_by_natural_key: dict[tuple[str, str], dict[str, Any]] = {}
+    raw_by_object_id: dict[str, dict[str, Any]] = {}
+    for raw in iter_store_hyperedges(store):
+        doc_id = raw_hyperedge_doc_id(raw)
+        hyperedge_id = raw_hyperedge_id(raw)
+        if doc_id and hyperedge_id:
+            raw_by_natural_key[(doc_id, hyperedge_id)] = raw
+        for object_id in object_id_candidates(raw):
+            raw_by_object_id[object_id] = raw
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        object_id = str(item.get("object_id") or "")
+        doc_id = str(item.get("doc_id") or "")
+        hyperedge_id = str(
+            metadata.get("raw_hyperedge_id")
+            or metadata.get("hyperedge_id")
+            or item.get("hyperedge_id")
+            or ""
+        )
+        raw = raw_by_object_id.get(object_id) or raw_by_natural_key.get((doc_id, hyperedge_id))
+        if raw and raw_matches_search_hard_filters(raw, filters, facts_map):
+            filtered.append(item)
+    return filtered
 
 
 def compact_material_fact(fact: dict[str, Any]) -> dict[str, Any]:
@@ -2585,6 +2688,159 @@ def diversify_material_fact_search_items(items: list[dict[str, Any]]) -> list[di
         return items
     other_items = [item for item in items if not has_material_fact_channel(item)]
     return diversify_material_fact_rows(material_items) + other_items
+
+
+MATERIAL_FACT_PRIORITY_QUERY_MARKERS = (
+    "dbto",
+    "dibutyl tin oxide",
+    "dibutyltin oxide",
+    "zinc-rich",
+    "zinc rich",
+    "zinc powder",
+    "zinc dust",
+    "zinc pigment",
+    "graphene",
+    "phosphate",
+    "\u4e8c\u4e01\u57fa\u6c27\u5316\u9521",
+    "\u5bcc\u950c",
+    "\u950c\u7c89",
+    "\u77f3\u58a8\u70ef",
+    "\u78f7\u9178\u76d0",
+)
+
+
+def material_fact_priority_query(query: str) -> bool:
+    text = str(query or "").casefold()
+    return any(marker.casefold() in text for marker in MATERIAL_FACT_PRIORITY_QUERY_MARKERS)
+
+SUBSTRATE_FACT_QUERY_MARKERS = (
+    "substrate",
+    "base material",
+    "base panel",
+    "cfrp",
+    "pa-cf",
+    "carbon fiber reinforced",
+    "carbon fibre reinforced",
+    "carbon-fiber reinforced",
+    "carbon-fibre reinforced",
+    "基底",
+    "基材",
+    "底材",
+    "碳纤维复合",
+    "碳纤维增强",
+)
+
+
+def substrate_query_terms(query: str) -> set[str]:
+    text = str(query or "").casefold()
+    if not any(marker.casefold() in text for marker in SUBSTRATE_FACT_QUERY_MARKERS):
+        return set()
+    terms: set[str] = set()
+    if any(marker in text for marker in ("cfrp", "pa-cf")) or "碳纤维" in text:
+        terms.update(
+            {
+                "cfrp",
+                "carbonfiberreinforcedplastic",
+                "carbonfiberreinforcedcomposite",
+                "carbonfibercomposite",
+                "碳纤维复合材料",
+                "碳纤维增强复合材料",
+            }
+        )
+    for phrase in (
+        "carbon fiber reinforced plastic",
+        "carbon fibre reinforced plastic",
+        "carbon fiber reinforced composite",
+        "carbon fibre reinforced composite",
+        "carbon fiber composite",
+        "carbon fibre composite",
+    ):
+        if phrase in text:
+            terms.add(material_recall_compact(phrase))
+    compact_query = material_recall_compact(text)
+    if len(compact_query) >= 6:
+        terms.add(compact_query)
+    return terms
+
+
+def substrate_fact_match_score(values: list[Any], query_terms: set[str]) -> float:
+    if not query_terms:
+        return 0.0
+    haystack = material_recall_compact(" ".join(str(value or "") for value in values))
+    if not haystack:
+        return 0.0
+    score = 0.0
+    for term in query_terms:
+        if not term:
+            continue
+        compacted = material_recall_compact(term)
+        if compacted and (compacted in haystack or haystack in compacted):
+            score = max(score, 1.25 if compacted in {"cfrp", "碳纤维复合材料", "碳纤维增强复合材料"} else 1.0)
+    return score
+
+
+def compact_substrate_fact(value: Any) -> dict[str, Any]:
+    return {"slot": "substrate", "substrate": str(value or "").strip()}
+
+
+def substrate_fact_recall_text(raw: dict[str, Any], values: list[Any]) -> str:
+    return " | ".join(
+        [
+            "object: hyperedge",
+            f"doc_id: {raw_hyperedge_doc_id(raw)}",
+            f"sample: {raw.get('sample_id') or raw.get('sample_label') or ''}",
+            "slot: substrate",
+            "substrates: " + "; ".join(str(value or "") for value in values[:12]),
+        ]
+    )
+
+
+def substrate_fact_row_sort_key(item: dict[str, Any]) -> tuple[float, float, str, str]:
+    return (
+        -float(item.get("score") or 0.0),
+        -float(item.get("substrate_fact_score") or 0.0),
+        str(item.get("doc_id") or ""),
+        str(item.get("object_id") or ""),
+    )
+
+
+def diversify_substrate_fact_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    doc_order: list[str] = []
+    for row in sorted(rows, key=substrate_fact_row_sort_key):
+        doc_key = str(row.get("doc_id") or row.get("object_id") or "")
+        if doc_key not in buckets:
+            buckets[doc_key] = []
+            doc_order.append(doc_key)
+        buckets[doc_key].append(row)
+    out: list[dict[str, Any]] = []
+    indexes = {doc_key: 0 for doc_key in doc_order}
+    while True:
+        appended = False
+        for doc_key in doc_order:
+            bucket = buckets[doc_key]
+            index = indexes[doc_key]
+            if index >= len(bucket):
+                continue
+            out.append(bucket[index])
+            indexes[doc_key] = index + 1
+            appended = True
+        if not appended:
+            break
+    return out
+
+
+def has_substrate_fact_channel(item: dict[str, Any]) -> bool:
+    channels = item.get("channels") if isinstance(item.get("channels"), list) else []
+    return "substrate_fact" in channels
+
+
+def diversify_substrate_fact_search_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    substrate_items = [item for item in items if has_substrate_fact_channel(item)]
+    if not substrate_items:
+        return items
+    other_items = [item for item in items if not has_substrate_fact_channel(item)]
+    return diversify_substrate_fact_rows(substrate_items) + other_items
 
 
 TEST_FACT_IMMERSION_QUERY_MARKERS = (
@@ -2761,7 +3017,7 @@ def test_fact_recall_rows(
     evidence_map = get_evidence_map(store)
     rows: list[dict[str, Any]] = []
     for raw in iter_store_hyperedges(store):
-        if not raw_matches_search_hard_filters(raw, filters):
+        if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
         facts = raw_fact_rows(raw, facts_map)
         evidence_rows = raw_evidence_rows(raw, evidence_map)
@@ -2940,6 +3196,12 @@ def numeric_query_kind(query: str) -> str | None:
     return None
 
 
+def hyperedge_natural_key(raw: dict[str, Any]) -> tuple[str, str] | None:
+    doc_id = raw_hyperedge_doc_id(raw)
+    hyperedge_id = raw_hyperedge_id(raw)
+    return (doc_id, hyperedge_id) if doc_id and hyperedge_id else None
+
+
 def unit_kind(unit: str) -> str | None:
     key = str(unit or "").casefold()
     if key in DURATION_UNIT_TO_HOURS:
@@ -2990,10 +3252,6 @@ def compare_numeric_value(value: float, op: str, threshold: float) -> bool:
     if op == "le":
         return value <= threshold
     return False
-
-
-def query_requests_numeric_fact_recall(query: str) -> bool:
-    return bool(parse_numeric_query_comparisons(query))
 
 
 def text_has_salt_spray_context(text: str) -> bool:
@@ -3186,7 +3444,7 @@ def numeric_fact_recall_rows(
     evidence_map = get_evidence_map(store)
     rows: list[dict[str, Any]] = []
     for raw in iter_store_hyperedges(store):
-        if not raw_matches_search_hard_filters(raw, filters):
+        if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
         facts = raw_fact_rows(raw, facts_map)
         evidence_rows = raw_evidence_rows(raw, evidence_map)
@@ -3254,7 +3512,7 @@ def material_fact_recall_rows(
     by_context: dict[tuple[str, str], list[dict[str, Any]]] = {}
     by_object_key: dict[str, dict[str, Any]] = {}
     for raw in all_hyperedges:
-        if not raw_matches_search_hard_filters(raw, filters):
+        if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
         for candidate in object_id_candidates(raw):
             by_object_key[candidate] = raw
@@ -3288,7 +3546,7 @@ def material_fact_recall_rows(
         if doc_id and context_id:
             candidate_raws.extend(by_context.get((doc_id, context_id), []))
         for raw in candidate_raws:
-            if not raw_matches_search_hard_filters(raw, filters):
+            if not raw_matches_search_hard_filters(raw, filters, facts_map):
                 continue
             object_id = raw_hyperedge_object_id(raw)
             if not object_id:
@@ -3321,6 +3579,48 @@ def material_fact_recall_rows(
             }
         )
     return diversify_material_fact_rows(rows)[:limit]
+
+
+def substrate_fact_recall_rows(
+    store: Any,
+    query: str,
+    filters: dict[str, Any],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    query_terms = substrate_query_terms(query)
+    if not query_terms:
+        return []
+    facts_map = get_facts_map(store)
+    evidence_map = get_evidence_map(store)
+    rows: list[dict[str, Any]] = []
+    for raw in iter_store_hyperedges(store):
+        if not raw_matches_search_hard_filters(raw, filters, facts_map):
+            continue
+        values = aggregate_filter_values(raw, "substrates", facts_map, evidence_map)
+        score = substrate_fact_match_score(values, query_terms)
+        if score <= 0.0:
+            continue
+        metadata = {
+            "hyperedge_id": raw_hyperedge_id(raw),
+            "raw_hyperedge_id": raw_hyperedge_id(raw),
+            "sample_id": raw.get("sample_id") or raw.get("sample_label"),
+            "context_id": raw.get("context_id"),
+            "matched_substrate_facts": [compact_substrate_fact(value) for value in values[:8]],
+        }
+        rows.append(
+            {
+                "object_type": "hyperedge",
+                "object_id": raw_hyperedge_object_id(raw),
+                "doc_id": raw_hyperedge_doc_id(raw),
+                "text_for_embedding": substrate_fact_recall_text(raw, values),
+                "metadata": metadata,
+                "substrate_fact_score": round(score, 6),
+                "score": round(1.0 + score, 6),
+                "channels": ["substrate_fact"],
+            }
+        )
+    return diversify_substrate_fact_rows(rows)[:limit]
 
 
 def merge_property_recall_candidates(
@@ -3411,6 +3711,64 @@ def merge_material_fact_recall_candidates(
             merged_metadata = dict(existing_metadata)
             if row_metadata.get("matched_material_facts"):
                 merged_metadata["matched_material_facts"] = row_metadata.get("matched_material_facts")
+            for key in ("sample_id", "context_id", "hyperedge_id", "raw_hyperedge_id"):
+                if not merged_metadata.get(key) and row_metadata.get(key) is not None:
+                    merged_metadata[key] = row_metadata.get(key)
+            item["metadata"] = merged_metadata
+    merged = list(by_object_id.values())
+    merged.sort(key=lambda item: (-float(item.get("score") or 0.0), str(item.get("object_id") or "")))
+    return merged
+
+
+def merge_substrate_fact_recall_candidates(
+    fused: list[dict[str, Any]],
+    substrate_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not substrate_rows:
+        return fused
+    by_object_id: dict[str, dict[str, Any]] = {}
+    for item in fused:
+        object_id = str(item.get("object_id") or "")
+        if object_id:
+            by_object_id[object_id] = dict(item)
+    for row in substrate_rows:
+        object_id = str(row.get("object_id") or "")
+        if not object_id:
+            continue
+        item = by_object_id.setdefault(
+            object_id,
+            {
+                "object_type": row.get("object_type"),
+                "object_id": row.get("object_id"),
+                "doc_id": row.get("doc_id"),
+                "text_for_embedding": row.get("text_for_embedding"),
+                "metadata": row.get("metadata") if isinstance(row.get("metadata"), dict) else {},
+                "score": 0.0,
+                "dense_score": None,
+                "sparse_score": None,
+                "property_soft_score": None,
+                "material_fact_score": None,
+                "substrate_fact_score": None,
+                "channels": [],
+            },
+        )
+        row_substrate_score = float(row.get("substrate_fact_score") or 1.0)
+        item["substrate_fact_score"] = max(float(item.get("substrate_fact_score") or 0.0), row_substrate_score)
+        item["score"] = max(float(item.get("score") or 0.0), float(row.get("score") or (1.0 + row_substrate_score)))
+        channels = item.setdefault("channels", [])
+        if "substrate_fact" not in channels:
+            channels.append("substrate_fact")
+        item["channels"] = sorted(channels)
+        if not item.get("doc_id"):
+            item["doc_id"] = row.get("doc_id")
+        if not item.get("text_for_embedding"):
+            item["text_for_embedding"] = row.get("text_for_embedding")
+        existing_metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        row_metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        if row_metadata:
+            merged_metadata = dict(existing_metadata)
+            if row_metadata.get("matched_substrate_facts"):
+                merged_metadata["matched_substrate_facts"] = row_metadata.get("matched_substrate_facts")
             for key in ("sample_id", "context_id", "hyperedge_id", "raw_hyperedge_id"):
                 if not merged_metadata.get(key) and row_metadata.get(key) is not None:
                     merged_metadata[key] = row_metadata.get(key)
@@ -3763,6 +4121,8 @@ def compact_search_metadata(metadata: Any) -> dict[str, Any]:
         "numeric_fact_label",
         "numeric_fact_op",
         "numeric_fact_threshold",
+        "matched_substrate_facts",
+        "matched_material_facts",
     ]:
         if metadata.get(key) is not None:
             out[key] = metadata.get(key)
@@ -3792,6 +4152,7 @@ def compact_search_item(item: dict[str, Any], rank: int) -> dict[str, Any]:
             "sparse_score": optional_score(item.get("sparse_score")),
             "property_soft_score": optional_score(item.get("property_soft_score")),
             "material_fact_score": optional_score(item.get("material_fact_score")),
+            "substrate_fact_score": optional_score(item.get("substrate_fact_score")),
             "test_fact_score": optional_score(item.get("test_fact_score")),
             "numeric_fact_score": optional_score(item.get("numeric_fact_score")),
             "soft_filter_score": optional_score(item.get("soft_filter_score")),
@@ -3804,6 +4165,25 @@ def compact_search_item(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "channels": item.get("channels") or [],
         "text_preview": compact_text(item.get("text_for_embedding"), 1200),
         "metadata": compact_search_metadata(metadata),
+    }
+
+
+def paginate_search_items(
+    items: list[dict[str, Any]],
+    *,
+    offset: int,
+    top_k: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    safe_offset = max(0, int(offset))
+    safe_top_k = max(1, int(top_k))
+    page = items[safe_offset : safe_offset + safe_top_k]
+    end = safe_offset + len(page)
+    has_more = end < len(items)
+    return page, {
+        "offset": safe_offset,
+        "page_size": len(page),
+        "next_offset": end if has_more else None,
+        "has_more": has_more,
     }
 
 
@@ -3821,10 +4201,35 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         }
     top_k = clamp_int(request.get("top_k"), DEFAULT_SEARCH_TOP_K, 1, MAX_SEARCH_TOP_K)
     candidate_k = clamp_int(request.get("candidate_k"), DEFAULT_SEARCH_CANDIDATE_K, top_k, MAX_SEARCH_CANDIDATE_K)
-    filters = normalize_search_filters(request.get("filters"))
-    warnings: list[str] = []
+    offset = clamp_int(request.get("offset"), 0, 0, candidate_k)
+    store = get_store()
+    filters, warnings = apply_hard_search_scopes(store, request.get("filters"))
     if filters["qa_policy"] != "include_all":
         warnings.append("qa_policy is recorded only in v2 and is not used for filtering")
+    if any(
+        warning in {
+            "assignee_hard_scope_resolved_empty",
+            "assignee_and_doc_id_hard_scopes_do_not_intersect",
+        }
+        for warning in warnings
+    ):
+        return {
+            "tool": "kg.hybrid_search",
+            "status": "empty",
+            "query": query,
+            "applied_filters": filters,
+            "pagination": {"offset": offset, "page_size": 0, "next_offset": None, "has_more": False},
+            "summary": {
+                "candidate_k": candidate_k,
+                "dense_found": 0,
+                "sparse_found": 0,
+                "pool_size": 0,
+                "returned": 0,
+            },
+            "items": [],
+            "warnings": warnings,
+            "generated_at": now_iso(),
+        }
 
     dense_vec, sparse_weights = embed_query(query)
     pg_env = expand.load_pg_env(expand.DEFAULT_PG_ENV)
@@ -3832,27 +4237,36 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         dense_rows = search_dense(conn, dense_vec, filters, candidate_k)
         sparse_rows = search_sparse(conn, sparse_weights, filters, candidate_k)
         property_rows = search_soft_property_candidates(conn, filters, candidate_k)
-    numeric_rows = numeric_fact_recall_rows(get_store(), query, filters, limit=candidate_k)
-    test_rows = test_fact_recall_rows(get_store(), query, filters, limit=candidate_k)
-    material_rows = material_fact_recall_rows(get_store(), query, filters, limit=candidate_k)
+    numeric_rows = numeric_fact_recall_rows(store, query, filters, limit=candidate_k)
+    test_rows = test_fact_recall_rows(store, query, filters, limit=candidate_k)
+    material_rows = material_fact_recall_rows(store, query, filters, limit=candidate_k)
+    substrate_rows = substrate_fact_recall_rows(store, query, filters, limit=candidate_k)
     fused = fuse_search_results(dense_rows, sparse_rows, top_k=candidate_k)
     fused = merge_property_recall_candidates(fused, property_rows)
     fused = merge_numeric_fact_recall_candidates(fused, numeric_rows)
     fused = merge_test_fact_recall_candidates(fused, test_rows)
     fused = merge_material_fact_recall_candidates(fused, material_rows)
-    recall_rows_present = bool(material_rows or test_rows or numeric_rows)
-    fused = rerank_search_results_by_soft_filters(fused, filters, top_k=candidate_k if recall_rows_present else top_k)
+    fused = merge_substrate_fact_recall_candidates(fused, substrate_rows)
+    fused = rerank_search_results_by_soft_filters(fused, filters, top_k=candidate_k)
     if numeric_rows:
-        fused = diversify_numeric_fact_search_items(fused)[:top_k]
+        fused = diversify_numeric_fact_search_items(fused)[:candidate_k]
+    elif material_rows and material_fact_priority_query(query):
+        fused = diversify_material_fact_search_items(fused)[:candidate_k]
     elif test_rows:
-        fused = diversify_test_fact_search_items(fused)[:top_k]
+        fused = diversify_test_fact_search_items(fused)[:candidate_k]
+    elif substrate_rows:
+        fused = diversify_substrate_fact_search_items(fused)[:candidate_k]
     elif material_rows:
-        fused = diversify_material_fact_search_items(fused)[:top_k]
-    items = [compact_search_item(item, rank) for rank, item in enumerate(fused, start=1)]
+        fused = diversify_material_fact_search_items(fused)[:candidate_k]
+    fused = filter_search_items_by_hard_material_roles(fused, store, filters)
+    page_rows, pagination = paginate_search_items(fused, offset=offset, top_k=top_k)
+    items = [compact_search_item(item, rank) for rank, item in enumerate(page_rows, start=offset + 1)]
     return {
         "tool": "kg.hybrid_search",
         "status": "ok" if items else "empty",
         "query": query,
+        "applied_filters": filters,
+        "pagination": pagination,
         "summary": {
             "candidate_k": candidate_k,
             "dense_found": len(dense_rows),
@@ -3860,7 +4274,9 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
             "property_soft_found": len(property_rows),
             "numeric_fact_found": len(numeric_rows),
             "test_fact_found": len(test_rows),
+            "substrate_fact_found": len(substrate_rows),
             "material_fact_found": len(material_rows),
+            "pool_size": len(fused),
             "returned": len(items),
         },
         "items": items,
@@ -3902,7 +4318,7 @@ class Handler(BaseHTTPRequestHandler):
                         "kg.doc_field_scan",
                     ],
                     "schema_version": expand.SCHEMA_VERSION,
-                    "kg_dirs": [str(path) for path in resolve_kg_sources()[0]],
+                    "kg_dirs": [str(source.path) for source in resolve_kg_sources()[0]],
                     "kg_zips": [str(path) for path in resolve_kg_sources()[1]],
                     "pg_env": str(expand.DEFAULT_PG_ENV),
                     "embed_url": EMBED_URL,

@@ -1,13 +1,13 @@
-# coating_kg
+# me_coatingextract
 
 **Coating Patent Knowledge Graph — V1.2.2 implementation**
 
 Vertical: 建筑外墙涂料 (architectural exterior coating).
-Historical development scope: a private BASF PCT patent corpus (not included).
+Demo dataset: 348 BASF PCT patents under `.\data\pdf\`.
 
 This repo implements the V1.2.2 design — an evidence-grounded hyperedge schema where every fact extracted from a coating patent's Examples section is stored as a multi-slot `FactHyperedge` (9 required + 10 optional + 1 marker fields), connected to canonical `Material / Application / Substrate / Property / Process / TestMethod / Evidence / Patent` nodes through a typed alias subgraph.
 
-The original design notes were kept in the private development workspace and are not included in this snapshot.
+Design source of truth: `docs\design\` (markdown 01-08), summarised in `docs\design\Coating_V1.2.2_design.docx`.
 
 ---
 
@@ -42,17 +42,17 @@ cp .env.example .env
 bash scripts/setup_db.sh
 
 # 4. ingest one patent end-to-end
-python -m coating_kg ingest "./data/pdf/example.pdf"
+python -m coating_kg ingest "G:/coating_1/20260502062406317/pdf/WO2026077939A1.pdf"
 ```
 
-The source archive intentionally excludes its original tests. The historical test command was:
+For a smoke test that needs **no** DB and **no** API key, run the deterministic-logic unit tests:
 
 ```bash
 pip install -r requirements.txt
 pytest tests/test_section_split.py tests/test_polarity.py tests/test_comparison_group.py -v
 ```
 
-See [`SAMPLE_RUN.md`](SAMPLE_RUN.md) for the historical walk-through. It is documentation, not a fresh acceptance result for this public snapshot.
+See [`SAMPLE_RUN.md`](SAMPLE_RUN.md) for a walk-through of the offline-runnable parts.
 
 ## Project structure
 
@@ -97,10 +97,11 @@ coating_kg/
 
 ## References
 
-- Private design note `06_entity_relation_hyperedge.md` — node + edge + hyperedge spec (not included)
-- Private design note `08_v122_amendments.md` — V1.2.1 → V1.2.2 deltas (not included)
-- Private design note `03_config_tables.md` — configuration-table source (not included)
+- `docs\design\06_entity_relation_hyperedge.md` — node + edge + hyperedge spec
+- `docs\design\08_v122_amendments.md` — V1.2.1 → V1.2.2 deltas
+- `docs\design\03_config_tables.md` — `forbidden_merge` / `must_merge` / `property_directionality` source
+- `docs\design\Coating_V1.2.2_design.docx` — final consolidated design
 
 ## License
 
-MIT; see the repository-level [`LICENSE`](../LICENSE).
+Internal R&D project. Not for distribution.

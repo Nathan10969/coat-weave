@@ -1,46 +1,44 @@
-# env / secrets
+# Secrets and local configuration
 .env
-*.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 
-# python
+# Python/runtime state
 __pycache__/
 *.py[cod]
-*$py.class
-*.egg-info/
-.eggs/
-build/
-dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .venv/
 venv/
-env/
-.pytest_cache/
-pytest-cache-files-*/
-.mypy_cache/
-.ruff_cache/
+runtime_data/
+logs/
+*.log
+*.sqlite*
 
-# generated data / outputs
+# Large source and generated artifacts
+runs/
 data/
 output/
-*.log
-*.jsonl.lock
-
-# generated docs / archives / scratch files
-.omx/
-docs/*.pdf
-docs/*.html
+/audit/
+backups/
+original_pdfs/
+pdf_*/
+*.pdf
 *.zip
-src/coating_kg/pipeline.zip
-scripts/_tmp_*.py
+*.7z
+*.tar
+*.gz
+*.jsonl
+*.csv
+*.xlsx
 
-# DB dumps
-*.sql.gz
-*.dump
-
-# IDE
+# Editors and operating systems
 .idea/
 .vscode/
-*.swp
-
-# OS
 .DS_Store
 Thumbs.db

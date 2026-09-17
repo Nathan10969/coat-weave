@@ -140,6 +140,30 @@ KG_SEARCH_SOFT_FILTER_ALIASES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+VALID_MATERIAL_ROLES = frozenset(
+    {"resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"}
+)
+MATERIAL_ROLE_ALIASES = {
+    "pigments": "pigment",
+    "fillers": "filler",
+    "additives": "additive",
+    "solvents": "solvent",
+    "catalysts": "catalyst",
+    "curing agents": "curing_agent",
+    "curing_agents": "curing_agent",
+    "hardener": "curing_agent",
+    "hardeners": "curing_agent",
+}
+
+
+def normalize_material_roles(value: Any) -> list[str]:
+    roles: list[str] = []
+    for item in normalize_string_list(value):
+        normalized = MATERIAL_ROLE_ALIASES.get(item.strip().casefold(), item.strip().casefold())
+        if normalized in VALID_MATERIAL_ROLES and normalized not in roles:
+            roles.append(normalized)
+    return roles
+
 
 INVALID_EXAMPLE_KIND_FILTER_VALUES = {
     "formulation",
@@ -181,14 +205,15 @@ def normalize_kg_search_filters(value: Any) -> dict[str, Any]:
     }
     for key, aliases in KG_SEARCH_SOFT_FILTER_ALIASES.items():
         filters[key] = normalize_string_list(first_present_filter_value(raw, aliases))
+    filters["material_roles"] = normalize_material_roles(
+        first_present_filter_value(raw, KG_SEARCH_SOFT_FILTER_ALIASES["material_roles"])
+    )
     return filters
 
 
 def normalize_kg_aggregate_filters(value: Any) -> dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     filters = normalize_kg_search_filters(raw)
-    filters["material_roles"] = normalize_string_list(raw.get("material_roles"))
-    filters["assignees"] = normalize_string_list(raw.get("assignees"))
     filters["application_family"] = normalize_string_list(
         raw.get("application_family") or raw.get("application_families")
     )

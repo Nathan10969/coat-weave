@@ -840,7 +840,18 @@ def _as_projection_list(value: Any) -> list[Any]:
 
 def hyperedge_materials(hyperedge: JSON) -> list[JSON]:
     out: list[JSON] = []
-    for key, default_role in [("resin", "Resin / binder"), ("additives", "Additive")]:
+    for key, default_role in [
+        ("resin", "Resin / binder"),
+        ("curing_agent", "Crosslinker / Curing agent"),
+        ("curing_agents", "Crosslinker / Curing agent"),
+        ("crosslinker", "Crosslinker / Curing agent"),
+        ("crosslinkers", "Crosslinker / Curing agent"),
+        ("pigments", "Pigment"),
+        ("fillers", "Filler"),
+        ("additives", "Additive"),
+        ("solvents", "Solvent"),
+        ("monomers", "Monomer"),
+    ]:
         for item in _as_projection_list(hyperedge.get(key)):
             if isinstance(item, dict):
                 row = dict(item)
@@ -939,10 +950,10 @@ def is_display_grade_hyperedge_material(material: JSON, role: str) -> bool:
         return False
     if label.strip(" _-:;") in GENERIC_NON_MATERIAL_LABELS:
         return False
-    if material_conflicts_with_resin_role(label):
-        return False
     if material.get("display_grade") is True or material.get("visually_confirmed") is True:
         return True
+    if material_conflicts_with_resin_role(label):
+        return False
     return material_has_nonzero_display_amount(material)
 
 
@@ -980,19 +991,27 @@ def material_conflicts_with_resin_role(label: str) -> bool:
 def hyperedge_property_cell(hyperedge: JSON) -> str:
     prop_raw = hyperedge.get("property")
     prop = prop_raw if isinstance(prop_raw, dict) else {}
-    result = hyperedge.get("result") if isinstance(hyperedge.get("result"), dict) else {}
-    value = str(result.get("value_text") or result.get("text") or result.get("value") or "").strip()
-    if not value:
+    display_values: list[str] = []
+    for result in _as_projection_list(hyperedge.get("result")):
+        if isinstance(result, dict):
+            value = str(result.get("value_text") or result.get("text") or result.get("value") or "").strip()
+            if not value:
+                continue
+            unit = str(result.get("unit") or "").strip()
+            unit_context = str(result.get("unit_context_source") or "").strip()
+            display_value = f"{value} {unit}".strip()
+            if value and not unit and unit_context:
+                display_value = f"{value} [unit_context:{unit_context}]"
+            _append_unique(display_values, display_value)
+        elif result not in (None, "", [], {}):
+            _append_unique(display_values, str(result).strip())
+    if not display_values:
         return ""
-    unit = str(result.get("unit") or "").strip()
-    unit_context = str(result.get("unit_context_source") or "").strip()
-    display_value = f"{value} {unit}".strip()
-    if value and not unit and unit_context:
-        display_value = f"{value} [unit_context:{unit_context}]"
     evidence = next(iter(hyperedge_evidence_items(hyperedge)), {})
     loc = str(evidence.get("row") or evidence.get("table") or "").strip()
-    prop_id = str(prop.get("canonical_id") or "")
+    prop_id = str(prop.get("canonical_id") or hyperedge.get("property_canonical_id") or "")
     prop_label = short_id(prop_id) or str(prop.get("name") or prop_raw or "")
+    display_value = "; ".join(display_values)
     return f"{prop_label}@{loc}:{display_value}" if loc else f"{prop_label}:{display_value}"
 
 
@@ -1058,7 +1077,7 @@ def hyperedge_substrate_label(hyperedge: JSON) -> str:
             return str(tested.get("name") or tested.get("value") or short_id(str(tested.get("canonical_id") or "")) or "")
         if isinstance(tested, list):
             return "; ".join(_unique(str(item) for item in tested if item))
-        return str(raw.get("tested_text") or short_id(str(tested or "")) or raw.get("value") or raw.get("name") or "")
+        return str(raw.get("tested_text") or short_id(str(tested or "")) or raw.get("value") or raw.get("name") or raw.get("label") or "")
     if isinstance(raw, list):
         return "; ".join(_unique(hyperedge_substrate_label({"substrate": item}) for item in raw))
     return str(raw or "")
@@ -1071,7 +1090,13 @@ def hyperedge_process_labels(hyperedge: JSON) -> list[str]:
             if isinstance(step, str) and step.strip():
                 _append_unique(out, step.strip())
             continue
-        label = str(step.get("condition") or short_id(str(step.get("canonical_id") or "")) or "")
+        label = str(
+            step.get("condition")
+            or step.get("param")
+            or short_id(str(step.get("canonical_id") or ""))
+            or step.get("step")
+            or ""
+        )
         _append_unique(out, label)
     return out
 

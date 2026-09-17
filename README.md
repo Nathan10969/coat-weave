@@ -1,48 +1,68 @@
-<p align="center"><img src="docs/assets/hero.svg" alt="CoatWeave: coating patent evidence and knowledge graphs" width="100%" /></p>
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="CoatWeave" width="100%" />
+</p>
 
 # CoatWeave
 
-Evidence-grounded coating patent extraction and tool-oriented research, created and maintained by [Nathan10969](https://github.com/Nathan10969).
+**Historical source snapshot 05** — a source-only milestone toward a tool-using coating research agent.
 
-中文简介：面向涂料专利的证据抽取、知识图谱与检索工具研究。本仓库按时间线公开历史源码；长期方向是构建类似 Codex / Claude Code 的 coating research agent，但当前快照不是完整 agent或生产部署声明。
+[![License: MIT](https://img.shields.io/badge/License-MIT-7c3aed.svg)](LICENSE)
+[![Snapshot](https://img.shields.io/badge/snapshot-05-0f766e.svg)](SNAPSHOT_20260812_123244.md)
 
-## Snapshot 04 — extraction and service split
+CoatWeave is evolving toward a coating-domain agent in the spirit of modern coding agents: it should plan, call focused tools, retrieve dispersed evidence, and produce traceable answers. This snapshot is not a complete agent or a production release. It preserves two code areas that existed at this point in the project timeline:
 
-This release publishes timeline snapshot **04**, dated **2026-06-02 13:33:02 +08:00**, from development branch `26_6_2` (source tip `1590daba854ad532452e76ba6ae3219a32a13db8`). The publication commit uses its actual publication date. The source date above is preserved provenance, not a newly claimed development date.
+- `extracting/`: patent knowledge-graph extraction, projection, validation, database helpers, prompts, and offline tests.
+- `service/`: API orchestration, routing, dialogue-memory support, and read-only knowledge-graph retrieval tools.
 
-The frozen ZIP contains 131 files in two source areas. `extracting/` holds the patent-to-KG pipeline; `service/` adds a historical API, dialogue-memory, routing and KG-tool service snapshot. Public branding, this README, the MIT license and original illustrations accompany the source. Earlier versions remain available through immutable tags [`snapshot-01`](https://github.com/Nathan10969/coat-weave/tree/snapshot-01), [`snapshot-02`](https://github.com/Nathan10969/coat-weave/tree/snapshot-02) and [`snapshot-03`](https://github.com/Nathan10969/coat-weave/tree/snapshot-03).
+The retrieval path is broader than ordinary chunk matching. The service contains hybrid search and graph expansion hooks, plus document-field scanning for cases where coating evidence is spread across a document. Tool invocation alone does not prove that evidence supports an answer; automatic citation entailment and end-to-end scientific validation remain future work.
 
-## Repository map
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="CoatWeave snapshot architecture" width="92%" />
+</p>
 
-- [`extracting/`](extracting/) — `coating_kg` package, CLI, prompts, database schema/seeds, Vision KG helpers and design notes.
-- [`service/`](service/) — historical FastAPI layer, orchestration, routing/answering, memory, KG tools, storage and deployment examples.
-- [`SNAPSHOT_26_6_2.md`](SNAPSHOT_26_6_2.md) — source-snapshot scope and exclusions.
-- [`MANIFEST.json`](MANIFEST.json) — public inventory derived from the frozen archive; paths and hashes reflect the sanitized public tree where applicable.
+## Quick start
 
-<img src="docs/assets/architecture.svg" alt="Conceptual coating patent evidence pipeline" width="100%" />
-
-The illustration is a conceptual overview, not a claim that every external integration is operational.
-
-## Local inspection
-
-Python 3.10 or newer is declared by the extraction package. To inspect its CLI without contacting external services:
+The extraction package requires Python 3.10 or newer:
 
 ```bash
 cd extracting
 python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-coating_kg --help
+python -m pip install -e ".[dev]"
+python -m coating_kg --help
+pytest -q
 ```
 
-The service is a separate historical component with its own [`requirements.txt`](service/requirements.txt) and empty credential placeholders in [`service/config/.env.example`](service/config/.env.example). Configure your own local paths and credentials before attempting an integration run. Do not commit the resulting `.env` file.
+The service is a separate application with its own dependencies and configuration template:
 
-## Validation boundaries
+```bash
+cd service
+python -m venv .venv
+python -m pip install -r requirements.txt
+cp config/.env.example .env
+```
 
-For this publication, the ZIP size and SHA-256 are checked against the timeline, and archive paths are checked for traversal. Python files are syntax-checked and import/CLI checks are run only where the available offline environment supports them. This snapshot intentionally excludes its original tests, data and runtime artifacts, so it does **not** carry a fresh model-quality, database, API, GPU, production-readiness or end-to-end acceptance claim.
+API keys and tokens are intentionally empty. Database, model, parsing-service, and corpus-dependent flows require infrastructure that is not included here. Do not treat local import or offline-test success as evidence of deployment readiness, retrieval quality, or scientific correctness.
 
-Raw PDFs, private corpora, credentials, pretrained model weights, generated indexes, logs and runtime state are not included. Public-facing paths and credential placeholders are sanitized without redesigning the historical business logic. Historical documents can describe intended or previously observed work; treat those statements as source context rather than independently reproduced results.
+## Snapshot record
+
+| Field | Value |
+|---|---|
+| Sequence | `05 / 17` |
+| Source branch | `snapshot/20260812-123244` |
+| Source revision | `1ee51a4a395ebc5ce5d60d44a66bcd3c29775abe` |
+| Source timestamp | `2026-08-12T12:41:28+08:00` |
+| Publication mode | Sanitized historical source snapshot |
+
+See [the snapshot note](SNAPSHOT_20260812_123244.md) for scope and validation boundaries.
+
+## Roadmap
+
+- Package retrieval, read, grep, and document-field scanning behind explicit tool contracts.
+- Enforce tool policies in runtime code rather than prompts alone.
+- Add citation-to-claim verification and evidence-quality gates.
+- Evaluate retrieval and answer quality on frozen coating benchmarks.
+- Extend the research workflow from retrieval foundation to a complete coating agent.
 
 ## License
 
-[MIT](LICENSE) · Copyright © 2026 Nathan10969. Covers repository code and original illustrations, not third-party patents, datasets, models or service terms.
+MIT © 2026 Nathan10969. Historical authorship remains visible in the Git history; this public snapshot does not claim that every component was newly developed at publication time.

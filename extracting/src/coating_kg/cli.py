@@ -221,7 +221,7 @@ def ingest_cmd(pdf_path: Path, dry_run: bool, skip_db: bool) -> None:
     vlm_description.json, matched_paragraphs.json, facts.json, normalized_facts.json。
     """
     from .pipeline import pdf_layout, unit_extractor, vlm_describe, entity_tagger
-    from .pipeline.fact_extractor import FactExtractor
+    from .pipeline.fact_extractor import FactExtractor, is_stage7_validation_publishable
     from .pipeline.polarity import classify_polarity
     from .pipeline.comparison_group import resolve_comparison_group
     from .pipeline.unit_materializer import materialize_unit
@@ -605,6 +605,14 @@ def ingest_cmd(pdf_path: Path, dry_run: bool, skip_db: bool) -> None:
                         ),
                         encoding="utf-8",
                     )
+                if not is_stage7_validation_publishable(ex_result.validation):
+                    logger.warning(
+                        "stage 7 quality gate blocked %s: status=%s",
+                        unit.unit_id,
+                        (ex_result.validation or {}).get("final_status", "missing"),
+                    )
+                    n_units_failed += 1
+                    continue
                 apply_context_inheritance(
                     facts,
                     unit=unit,

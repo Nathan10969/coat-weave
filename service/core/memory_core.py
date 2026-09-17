@@ -69,7 +69,7 @@ def ensure_seed_data() -> None:
             SUMMARY,
             {
                 "session_id": SESSION_ID,
-                "goal": "演示一个轻量 Dialogue Memory 系统：聊天时能看到记忆如何被保存、压缩、召回并形成图谱。",
+                "goal": "基于综合涂料行业知识与专利知识图谱回答用户问题；船舶、汽车、建筑、工业和光纤涂层等均为平等子领域。",
                 "current_state": "本地 demo 使用文件存储和 Cytoscape.js 图谱；默认读取 OpenAI-compatible 模型配置，未配置 key 时走 mock。",
                 "decisions": [
                     "不直接集成完整 agentmemory 仓库。",

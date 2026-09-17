@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 class ChatOptions(BaseModel):
     include_debug: bool = False
-    stream: bool = False
     mock_model: bool = False
 
 
@@ -26,7 +25,6 @@ class OpenAIChatMessage(BaseModel):
 class OpenAIChatCompletionRequest(BaseModel):
     model: str | None = None
     messages: list[OpenAIChatMessage] = Field(min_length=1)
-    stream: bool = True
     user: str | None = None
     conversation_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -53,7 +51,6 @@ class OpenAIChatCompletionRequest(BaseModel):
             user_id=self.user,
             options=ChatOptions(
                 include_debug=self.options.include_debug,
-                stream=self.stream,
                 mock_model=self.options.mock_model,
             ),
         )

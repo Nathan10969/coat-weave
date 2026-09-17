@@ -14,23 +14,23 @@
 
 用法 (Windows PowerShell):
 
-    cd .\\coating_kg
+    cd <repository-root>\\extracting
 
     # 单 PDF
     & "python" scripts\\run_pipeline.py `
-      .\\20260502062406317\\pdf\\WO2026077939A1.pdf
+      .\\data\\pdf\\WO2026077939A1.pdf
 
     # 多个特定 PDF
     & "python" scripts\\run_pipeline.py `
-      .\\20260502062406317\\pdf\\WO2026077939A1.pdf `
-      .\\20260502062406317\\pdf\\WO2026XXXXXX.pdf
+      .\\data\\pdf\\WO2026077939A1.pdf `
+      .\\data\\pdf\\WO2026XXXXXX.pdf
 
     # 目录里前 5 篇 (PowerShell 展开)
-    $pdfs = (Get-ChildItem .\\20260502062406317\\pdf\\*.pdf | Select-Object -First 5).FullName
+    $pdfs = (Get-ChildItem .\\data\\pdf\\*.pdf | Select-Object -First 5).FullName
     & "python" scripts\\run_pipeline.py @pdfs
 
     # 348 全跑 (耐心等 — ~5h, ~¥150)
-    $pdfs = (Get-ChildItem .\\20260502062406317\\pdf\\*.pdf).FullName
+    $pdfs = (Get-ChildItem .\\data\\pdf\\*.pdf).FullName
     & "python" scripts\\run_pipeline.py @pdfs
 
   Skip flags:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from answering import build_provider_body, extract_provider_text, provider_config, provider_headers, provider_messages_url
@@ -15,6 +17,7 @@ from demo_config import (
     KG_HYBRID_DEFAULT_TOP_K,
     RAW_TURNS,
     SESSION_ID,
+    TOOL_OBSERVATIONS,
     TOOL_ROUTING,
 )
 from demo_storage import append_jsonl, now_iso, read_jsonl
@@ -31,6 +34,7 @@ from demo_text import (
 from scope_state import (
     GLOBAL_SCOPE_TERMS,
     PREVIOUS_SCOPE_TERMS,
+    _app_value,
     ambiguous_global_comparison,
     document_local_question,
     has_any,
@@ -42,9 +46,6 @@ from scope_state import (
     remember_scope_resolution,
     scope_applies_to_kg_search,
 )
-def _app_value(name: str, default: Any) -> Any:
-    app_module = sys.modules.get("app")
-    return getattr(app_module, name, default) if app_module is not None else default
 
 def coating_scope_topic(question: str) -> bool:
     return wants_coating_kg_search(question) or has_any(
@@ -316,7 +317,7 @@ def unresolved_doc_local_reference(question: str, scope_resolution: dict[str, An
     lower = question.lower()
     if ("里面" in question or "里" in question) and not any(term in question for term in DOC_LOCAL_REFERENCE_TERMS):
         return False
-    reference_terms = ["this patent", "this doc", "this document", "这篇", "这个专利", "该专利", "里面"]
+    reference_terms = [*DOC_LOCAL_REFERENCE_TERMS, "this patent", "this doc", "this document", "里面"]
     return any(term in lower or term in question for term in reference_terms)
 
 def should_use_doc_field_scan(question: str, scope_resolution: dict[str, Any]) -> bool:
@@ -389,15 +390,71 @@ def should_force_scoped_kg_search(question: str, scope_resolution: dict[str, Any
         return False
     return document_local_question(question) or wants_coating_kg_search(question)
 
+# Single source of truth for marine question wording. Union of the former five
+# near-duplicate copies (KG_QUERY_REWRITE_CONCEPTS["marine"].triggers plus the
+# inline tables in infer_aggregate_target, aggregate_filters_for_question,
+# build_aggregate_call and wants_coating_kg_search). Kept as two constants
+# because some call sites match EN terms against the lower()-cased question
+# while ZH terms are matched against the raw question text.
+MARINE_QUESTION_TERMS_ZH: tuple[str, ...] = (
+    "船舶",
+    "船用",
+    "海洋",
+    "海工",
+    "海上",
+    "船体",
+    "船壳",
+    "压载舱",
+    "海水",
+    "甲板",
+    "外板",
+    "水线区",
+    "油舱",
+    "货舱",
+    "船坞",
+    "坞修",
+    "船厂",
+    "浪溅区",
+    "防海生物附着",
+    "海生物附着",
+    "海洋生物附着",
+    "海洋生物污损",
+)
+MARINE_QUESTION_TERMS_EN: tuple[str, ...] = (
+    "marine",
+    "ship",
+    "vessel",
+    "hull",
+    "naval",
+    "offshore",
+    "deck",
+    "cargo hold",
+    "cargo tank",
+    "dry dock",
+    "dry-dock",
+    "shipyard",
+    "splash zone",
+)
+
+# Single source of truth for zinc-rich(-primer) trigger wording. Union of the
+# former zinc_rich / zinc_powder / zinc_rich_primer concept triggers plus the
+# zinc_rich_primer_context() inline table. Also the head of
+# ZINC_LOADING_TRIGGERS below.
+ZINC_RICH_PRIMER_TRIGGERS: tuple[str, ...] = (
+    "环氧富锌",
+    "富锌",
+    "锌粉",
+    "富锌底漆",
+    "富锌底涂",
+    "zinc-rich",
+    "zinc rich",
+    "zinc dust",
+    "zinc powder",
+    "zinc pigment",
+    "epoxy zinc",
+)
+
 KG_QUERY_REWRITE_CONCEPTS: dict[str, dict[str, tuple[str, ...]]] = {
-    "zinc_rich": {
-        "triggers": ("富锌",),
-        "terms": ("zinc rich", "zinc-rich"),
-    },
-    "zinc_powder": {
-        "triggers": ("锌粉",),
-        "terms": ("zinc dust", "zinc powder"),
-    },
     "electrocoat": {
         "triggers": ("电泳涂料", "电泳"),
         "terms": ("electrodepositable coating", "electrocoat", "electrodeposition"),
@@ -411,41 +468,7 @@ KG_QUERY_REWRITE_CONCEPTS: dict[str, dict[str, tuple[str, ...]]] = {
         "terms": ("steel",),
     },
     "marine": {
-        "triggers": (
-            "船舶",
-            "船用",
-            "海洋",
-            "海工",
-            "海上",
-            "船体",
-            "船壳",
-            "压载舱",
-            "海水",
-            "甲板",
-            "外板",
-            "水线区",
-            "油舱",
-            "货舱",
-            "船坞",
-            "坞修",
-            "船厂",
-            "浪溅区",
-            "防海生物附着",
-            "海生物附着",
-            "海洋生物附着",
-            "海洋生物污损",
-            "marine",
-            "ship",
-            "vessel",
-            "offshore",
-            "deck",
-            "cargo hold",
-            "cargo tank",
-            "dry dock",
-            "dry-dock",
-            "shipyard",
-            "splash zone",
-        ),
+        "triggers": MARINE_QUESTION_TERMS_ZH + MARINE_QUESTION_TERMS_EN,
         "terms": (
             "marine coating",
             "ship coating",
@@ -464,19 +487,11 @@ KG_QUERY_REWRITE_CONCEPTS: dict[str, dict[str, tuple[str, ...]]] = {
             "marine immersion",
         ),
     },
+    # Merged former zinc_rich / zinc_powder / zinc_rich_primer concepts: their
+    # trigger tuples were subsets of one another, so they always fired for the
+    # same zinc questions; terms below are the union of all three.
     "zinc_rich_primer": {
-        "triggers": (
-            "环氧富锌",
-            "富锌",
-            "锌粉",
-            "富锌底漆",
-            "富锌底涂",
-            "zinc-rich",
-            "zinc rich",
-            "zinc dust",
-            "zinc powder",
-            "zinc pigment",
-        ),
+        "triggers": ZINC_RICH_PRIMER_TRIGGERS,
         "terms": (
             "epoxy zinc-rich primer",
             "zinc-rich primer",
@@ -485,6 +500,8 @@ KG_QUERY_REWRITE_CONCEPTS: dict[str, dict[str, tuple[str, ...]]] = {
             "epoxy primer",
             "steel primer",
             "anti-corrosion primer",
+            "zinc rich",
+            "zinc-rich",
         ),
     },
     "silicone": {
@@ -625,12 +642,6 @@ KG_QUERY_REWRITE_CONCEPTS: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 
-KG_QUERY_REWRITE_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
-    (trigger, concept["terms"])
-    for concept in KG_QUERY_REWRITE_CONCEPTS.values()
-    for trigger in concept["triggers"]
-)
-
 MARINE_CONTEXT_REQUIRED_REWRITE_CONCEPTS = {
     "marine_immersion_water",
     "marine_adhesion_system",
@@ -733,18 +744,6 @@ MARINE_PROPERTY_FAMILY_CANONICAL_IDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-MARINE_DEFAULT_PROPERTY_FAMILIES: tuple[str, ...] = (
-    "marine_antifouling",
-    "marine_fouling_release",
-    "marine_corrosion",
-    "marine_immersion_durability",
-    "marine_adhesion",
-    "marine_mechanical_durability",
-    "marine_weathering_uv",
-    "marine_repair_constructability",
-    "marine_tank_chemical",
-)
-
 MARINE_PROPERTY_FAMILIES_BY_REWRITE_CONCEPT: dict[str, tuple[str, ...]] = {
     "marine_antifouling": ("marine_antifouling", "marine_fouling_release"),
     "marine_immersion_water": ("marine_immersion_durability", "marine_adhesion"),
@@ -803,17 +802,11 @@ SEMANTIC_OPERATOR_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 ZINC_LOADING_TRIGGERS: tuple[str, ...] = (
+    *ZINC_RICH_PRIMER_TRIGGERS,
     "zinc loading",
     "zinc content",
-    "zinc dust",
-    "zinc powder",
-    "zinc pigment",
-    "zinc-rich",
-    "zinc rich",
     "zinc",
     "锌含量",
-    "锌粉",
-    "富锌",
 )
 
 CORROSION_OUTCOME_TRIGGERS: tuple[str, ...] = (
@@ -879,27 +872,12 @@ CORROSION_EXPANSION_TERMS: tuple[str, ...] = (
     "retain corrosion protection",
 )
 
-def contains_any(text: str, terms: tuple[str, ...] | list[str]) -> bool:
-    lower = text.lower()
-    return any(term.lower() in lower for term in terms)
-
 def rewrite_concept_active(question: str, concept: str) -> bool:
     config = KG_QUERY_REWRITE_CONCEPTS.get(concept, {})
-    return contains_any(question, config.get("triggers", ()))
+    return has_any(question, config.get("triggers", ()))
 
 def zinc_rich_primer_context(question: str) -> bool:
-    lower = str(question or "").lower()
-    return contains_any(
-        lower,
-        (
-            "zinc-rich",
-            "zinc rich",
-            "zinc dust",
-            "zinc powder",
-            "zinc pigment",
-            "epoxy zinc",
-        ),
-    ) or any(term in question for term in ("环氧富锌", "富锌", "锌粉"))
+    return has_any(str(question or ""), ZINC_RICH_PRIMER_TRIGGERS)
 
 def append_unique_values(out: list[str], values: tuple[str, ...] | list[str]) -> None:
     seen = {value.lower() for value in out}
@@ -939,6 +917,124 @@ def append_unique_terms(additions: list[str], seen: set[str], terms: tuple[str, 
         seen.add(normalized)
         additions.append(term)
 
+def _empty_query_facets() -> dict[str, Any]:
+    slot_names = (
+        "substrates",
+        "materials",
+        "systems",
+        "coating_types",
+        "properties",
+        "tests",
+        "numeric_constraints",
+    )
+    return {
+        "hard": {slot: [] for slot in slot_names},
+        "soft": {slot: [] for slot in slot_names},
+    }
+
+def _append_facet_values(out: list[Any], values: tuple[Any, ...] | list[Any]) -> None:
+    seen = {json.dumps(value, sort_keys=True, ensure_ascii=False) for value in out}
+    for value in values:
+        key = json.dumps(value, sort_keys=True, ensure_ascii=False)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+
+def _numeric_constraint(kind: str, operator: str, value: float, unit: str) -> dict[str, Any]:
+    return {"kind": kind, "operator": operator, "value": float(value), "unit": unit}
+
+def analyze_query_facets(question: str) -> dict[str, Any]:
+    text = str(question or "")
+    lower = text.lower()
+    facets = _empty_query_facets()
+    hard = facets["hard"]
+
+    cfrp_terms = (
+        "cfrp",
+        "pa-cf",
+        "carbon fiber reinforced",
+        "carbon fibre reinforced",
+        "carbon-fiber reinforced",
+        "carbon-fibre reinforced",
+        "碳纤维复合",
+        "碳纤维增强",
+    )
+    substrate_markers = (
+        "substrate",
+        "base material",
+        "as substrate",
+        "for substrate",
+        "为基底",
+        "为基材",
+        "作为基底",
+        "作为基材",
+        "基底",
+        "基材",
+        "底材",
+    )
+    if has_any(lower, cfrp_terms) and has_any(lower, substrate_markers):
+        _append_facet_values(
+            hard["substrates"],
+            ("CFRP", "carbon fiber reinforced plastic", "carbon fiber reinforced composite"),
+        )
+
+    zinc_rich_primer = zinc_rich_primer_context(text) or has_any(
+        lower,
+        (
+            "epoxy zinc-rich primer",
+            "zinc-rich epoxy primer",
+            "zinc rich epoxy primer",
+            "epoxy zinc rich primer",
+        ),
+    )
+    if zinc_rich_primer:
+        if has_any(lower, ("epoxy",)) or "环氧" in text:
+            _append_facet_values(hard["systems"], ("epoxy",))
+        else:
+            _append_facet_values(facets["soft"]["systems"], ("epoxy",))
+        _append_facet_values(hard["materials"], ("zinc powder", "zinc dust", "zinc pigment"))
+        _append_facet_values(hard["coating_types"], ("primer",))
+
+    if has_any(lower, ("salt spray", "salt fog", "astm b117", "iso 9227")) or any(
+        term in text for term in ("盐雾", "盐霧")
+    ):
+        _append_facet_values(facets["soft"]["tests"], ("salt spray", "ASTM B117", "ISO 9227"))
+    if has_any(lower, ("adhesion", "cross-cut", "cross cut", "pull-off", "pull off")) or "附着" in text:
+        _append_facet_values(facets["soft"]["properties"], ("adhesion",))
+    if has_any(lower, ("chemical immersion", "chemical resistance immersion", "seawater immersion")) or any(
+        term in text for term in ("化学性浸泡", "耐化学性浸泡", "海水浸泡", "挂板海水")
+    ):
+        _append_facet_values(facets["soft"]["tests"], ("chemical immersion", "seawater immersion"))
+
+    comparison_patterns = [
+        (r"(?:超过|大于|高于|>|>=)\s*(\d+(?:\.\d+)?)\s*(?:小时|h|hr|hrs|hour|hours)", ">"),
+        (r"(?:小于|低于|少于|<|<=)\s*(\d+(?:\.\d+)?)\s*(?:μm|um|micron|microns|微米)", "<"),
+        (r"(?:小于|低于|少于|<|<=)\s*(\d+(?:\.\d+)?)\s*(?:mil|mils)", "<"),
+    ]
+    for pattern, operator in comparison_patterns:
+        for match in re.finditer(pattern, lower, flags=re.IGNORECASE):
+            value = float(match.group(1))
+            unit_text = match.group(0).lower()
+            if "mil" in unit_text:
+                value *= 25.4
+                unit = "um"
+            elif any(token in unit_text for token in ("μm", "um", "micron", "微米")):
+                unit = "um"
+            else:
+                unit = "h"
+            if unit == "h" and (has_any(lower, ("salt spray", "salt fog", "astm b117", "iso 9227")) or "盐雾" in text):
+                _append_facet_values(
+                    hard["numeric_constraints"],
+                    (_numeric_constraint("salt_spray_duration", operator, value, unit),),
+                )
+            elif unit == "um" and (has_any(lower, ("film thickness", "dft", "thickness")) or "膜厚" in text):
+                _append_facet_values(
+                    hard["numeric_constraints"],
+                    (_numeric_constraint("film_thickness", operator, value, unit),),
+                )
+    return facets
+
 def analyze_kg_query_semantics(question: str) -> dict[str, Any]:
     text = str(question or "")
     lower = text.lower()
@@ -946,13 +1042,13 @@ def analyze_kg_query_semantics(question: str) -> dict[str, Any]:
     outcomes: list[str] = []
     operator = "unknown"
 
-    if contains_any(lower, ZINC_LOADING_TRIGGERS):
+    if has_any(lower, ZINC_LOADING_TRIGGERS):
         concepts.append("zinc_loading")
-    if contains_any(lower, CORROSION_OUTCOME_TRIGGERS):
+    if has_any(lower, CORROSION_OUTCOME_TRIGGERS):
         outcomes.append("corrosion_protection")
 
     for candidate in ("replace", "decrease", "increase"):
-        if contains_any(lower, SEMANTIC_OPERATOR_TERMS[candidate]):
+        if has_any(lower, SEMANTIC_OPERATOR_TERMS[candidate]):
             operator = candidate
             break
 
@@ -965,29 +1061,62 @@ def analyze_kg_query_semantics(question: str) -> dict[str, Any]:
     if "corrosion_protection" in outcomes:
         append_unique_terms(expansion_terms, seen, CORROSION_EXPANSION_TERMS, lower)
 
+    facets = analyze_query_facets(question)
+    hard_facets = facets.get("hard", {})
+    has_hard_facets = any(bool(values) for values in hard_facets.values())
     return {
         "operator": operator,
         "concepts": concepts,
         "outcomes": outcomes,
         "expansion_terms": expansion_terms,
         "required_terms": required_terms,
-        "guard": bool("zinc_loading" in concepts and operator in ZINC_LOADING_EXPANSION_TERMS),
+        "query_facets": facets,
+        "guard": bool("zinc_loading" in concepts and operator in ZINC_LOADING_EXPANSION_TERMS) or has_hard_facets,
     }
+
+def hard_epoxy_zinc_primer_facets(facets: dict[str, Any]) -> bool:
+    hard_facets = facets.get("hard") if isinstance(facets.get("hard"), dict) else {}
+    hard_materials = {str(value).lower() for value in hard_facets.get("materials", [])}
+    hard_systems = {str(value).lower() for value in hard_facets.get("systems", [])}
+    hard_coating_types = {str(value).lower() for value in hard_facets.get("coating_types", [])}
+    return bool(
+        hard_materials & {"zinc powder", "zinc dust", "zinc pigment"}
+        and "epoxy" in hard_systems
+        and "primer" in hard_coating_types
+    )
 
 def build_kg_search_query(query: str, original_question: str = "") -> str:
     combined = f"{query}\n{original_question}".strip()
     lower = combined.lower()
     additions: list[str] = []
     seen: set[str] = set()
+    pre_semantics = analyze_kg_query_semantics(combined)
+    if hard_epoxy_zinc_primer_facets(pre_semantics.get("query_facets", {})):
+        return (
+            "epoxy zinc-rich primer zinc powder zinc dust zinc pigment "
+            "steel primer anti-corrosion primer formulation composition "
+            "recipe table component amount parts by weight wt%"
+        )
     marine_context_active = rewrite_concept_active(combined, "marine")
     for concept_name, concept in KG_QUERY_REWRITE_CONCEPTS.items():
         if concept_name in MARINE_CONTEXT_REQUIRED_REWRITE_CONCEPTS and not marine_context_active:
             continue
-        if not contains_any(combined, concept["triggers"]):
+        if not has_any(combined, concept["triggers"]):
             continue
         append_unique_terms(additions, seen, concept["terms"], lower)
-    semantics = analyze_kg_query_semantics(combined)
+    semantics = pre_semantics
     append_unique_terms(additions, seen, semantics.get("expansion_terms", []), lower)
+    facets = semantics.get("query_facets") if isinstance(semantics.get("query_facets"), dict) else {}
+    hard_facets = facets.get("hard") if isinstance(facets.get("hard"), dict) else {}
+    for slot in ("substrates", "materials", "systems", "coating_types", "tests"):
+        append_unique_terms(additions, seen, hard_facets.get(slot, []), lower)
+    for constraint in hard_facets.get("numeric_constraints", []):
+        if not isinstance(constraint, dict):
+            continue
+        if constraint.get("kind") == "salt_spray_duration":
+            append_unique_terms(additions, seen, ("salt spray duration", "test hours"), lower)
+        elif constraint.get("kind") == "film_thickness":
+            append_unique_terms(additions, seen, ("film thickness", "dry film thickness"), lower)
     base = str(query or original_question).strip()
     base_lower = base.lower()
     preserved_ids = [
@@ -1001,7 +1130,7 @@ def build_kg_search_query(query: str, original_question: str = "") -> str:
 
 def explicit_corrosion_property_filter_requested(question: str) -> bool:
     lower = str(question or "").lower()
-    asks_corrosion = contains_any(
+    asks_corrosion = has_any(
         lower,
         (
             "corrosion_protection",
@@ -1014,14 +1143,30 @@ def explicit_corrosion_property_filter_requested(question: str) -> bool:
             "iso 9227",
         ),
     ) or any(term in question for term in ["防腐", "耐腐蚀", "盐雾", "盐雾防腐"])
-    explicit_scope = contains_any(lower, ("only", "strictly", "filter", "must be", "property=")) or any(
+    explicit_scope = has_any(lower, ("only", "strictly", "filter", "must be", "property=")) or any(
         term in question for term in ["只看", "仅看", "只要", "限定", "限于", "必须是", "明确"]
     )
     return asks_corrosion and explicit_scope
 
 def kg_search_filters_for_question(question: str, raw_filters: Any = None) -> dict[str, Any]:
     filters = normalize_kg_search_filters(raw_filters)
-    if rewrite_concept_active(question, "marine") and "marine" not in {value.lower() for value in filters["application_family"]}:
+    facets = analyze_query_facets(question)
+    hard_facets = facets.get("hard", {})
+    hard_zinc_primer = hard_epoxy_zinc_primer_facets(facets)
+    append_unique_values(filters["substrates"], hard_facets.get("substrates", []))
+    if hard_zinc_primer:
+        # "Marine" is often conversation/application context, while zinc-rich
+        # epoxy primer evidence may be stored as generic heavy-duty corrosion
+        # protection. Do not let that soft context exclude direct material facts.
+        filters["application_family"] = []
+        # The LLM sometimes emits "zinc-rich primer" as a material role. It is a
+        # coating/system facet, not a role, and narrows backend filtering wrongly.
+        filters["material_roles"] = []
+    if (
+        not hard_zinc_primer
+        and rewrite_concept_active(question, "marine")
+        and "marine" not in {value.lower() for value in filters["application_family"]}
+    ):
         filters["application_family"].append("marine")
     property_families = marine_property_families_for_question(question)
     append_unique_values(filters["property_families"], property_families)
@@ -1090,7 +1235,7 @@ def kg_expand_top_k_for_question(question: str) -> int:
     if kg_search_only_requested(question):
         return 0
     if analyze_kg_query_semantics(question).get("guard"):
-        return 6
+        return 30
     lower = question.lower()
     evidence_terms = [
         "answer",
@@ -1107,10 +1252,10 @@ def kg_expand_top_k_for_question(question: str) -> int:
         "recommend",
     ]
     if any(term in lower for term in evidence_terms):
-        return 6
+        return 30
     if any(term in question for term in ["回答", "证据", "引用", "页", "表", "哪里", "提到", "测试", "试验", "结果", "方法", "对比", "推荐", "怎么样"]):
-        return 6
-    return 6
+        return 30
+    return 30
 
 AGGREGATE_INTENTS = {"distinct_count", "list_distinct", "group_count", "numeric_distribution"}
 
@@ -1130,20 +1275,16 @@ AGGREGATE_TARGETS = {
     "formulation",
 }
 
+# Every entry below also appears in scope_state.GLOBAL_SCOPE_TERMS (head of the
+# list). Kept as a separate, deliberately narrower subset: GLOBAL_SCOPE_TERMS
+# drives resolve_scope's clear_global decision, while this tuple only detects
+# "the KG/database as a container" questions. Do not extend it with the
+# scope-clearing phrases ("所有专利", "换一篇", ...).
 KG_GLOBAL_CONTAINER_TERMS = ("图谱", "知识图谱", "数据库", "KG", "kg", "全库")
-SCOPE_RESET_TERMS = (
-    "解除锁定",
-    "解除scope",
-    "解除 scope",
-    "取消scope",
-    "取消 scope",
-    "接触锁定",
-    "新检索",
-    "重新检索",
-    "不限当前",
-    "不限这篇",
-    "其他专利",
-)
+# Curated proper subset of scope_state.DOCUMENT_LOCAL_TERMS: only the explicit
+# ZH "this document" phrases. Not replaced by DOCUMENT_LOCAL_TERMS itself —
+# that list also holds generic content words (里面/其中/method/result/...),
+# which would flip the bare-"里(面)" guard in unresolved_doc_local_reference.
 DOC_LOCAL_REFERENCE_TERMS = ("这篇", "本篇", "该专利", "这个专利", "这个文献", "该文献", "这份专利")
 
 PATENT_EXPLANATION_TERMS = ("讲解", "解读", "分析", "介绍", "说一下", "具体", "说一个")
@@ -1159,6 +1300,10 @@ PATENT_MULTI_TERMS = (
     "其他专利",
     "要其他专利",
 )
+# NOTE: "其他专利"/"要其他专利"/"换一篇" also appear in scope_state.GLOBAL_SCOPE_TERMS
+# with a DIFFERENT meaning (clear doc scope → go global). resolve_scope runs first
+# and wins when both match; the entries here only mark short follow-up queries for
+# query rewriting. Same words, different axes — do not merge the two lists.
 KG_FOLLOWUP_TERMS = (
     "再给我几篇",
     "再来几篇",
@@ -1179,49 +1324,6 @@ KG_FOLLOWUP_TERMS = (
     "重新",
     "需要啊",
     "只看这篇",
-)
-COATING_DOMAIN_TERMS = (
-    "涂料",
-    "专利",
-    "证据",
-    "配方",
-    "性能",
-    "树脂",
-    "基料",
-    "固化剂",
-    "颜料",
-    "填料",
-    "有机硅",
-    "聚硅氧烷",
-    "硅氧烷",
-    "硅树脂",
-    "硅烷",
-    "防污",
-    "防腐",
-    "富锌",
-    "环氧",
-    "涂层",
-    "油漆",
-    "底漆",
-    "底涂",
-    "助剂",
-    "聚氨酯",
-    "锌粉",
-    "防腐蚀",
-    "耐腐蚀",
-    "盐雾",
-    "船舶",
-    "船用",
-    "海洋",
-    "海工",
-    "海水",
-    "压载舱",
-    "甲板",
-    "配比",
-    "比例",
-    "组成",
-    "成分",
-    "用量",
 )
 PATENT_TECH_TERMS = (
     "有机硅",
@@ -1313,6 +1415,67 @@ def kg_followup_request(question: str) -> bool:
     if len(text) > 40:
         return False
     return any(term in text for term in KG_FOLLOWUP_TERMS) or any(term in lower for term in KG_FOLLOWUP_TERMS)
+
+
+PAGINATION_FOLLOWUP_TERMS = (
+    "more",
+    "next page",
+    "continue",
+    "\u66f4\u591a",
+    "\u4e0b\u4e00\u9875",
+    "\u7ee7\u7eed",
+    "\u8fd8\u6709\u5417",
+    "\u518d\u7ed9\u6211",
+    "\u518d\u6765",
+)
+
+
+def pagination_followup_request(question: str) -> bool:
+    text = str(question or "").strip().casefold()
+    return bool(text) and len(text) <= 40 and any(term.casefold() in text for term in PAGINATION_FOLLOWUP_TERMS)
+
+
+def pagination_route_from_observation(question: str, observation: dict[str, Any]) -> dict[str, Any]:
+    result = observation.get("result") if isinstance(observation, dict) else {}
+    result = result if isinstance(result, dict) else {}
+    pagination = result.get("pagination") if isinstance(result.get("pagination"), dict) else {}
+    next_offset = pagination.get("next_offset")
+    if next_offset is None:
+        return {
+            "router": "deterministic_pagination_exhausted",
+            "needs_tools": False,
+            "calls": [],
+            "plan_type": "answer_directly",
+            "confidence": 1.0,
+            "answer_directly_reason": "previous candidate pool has no next page",
+        }
+    call = {
+        "tool": "kg.hybrid_search",
+        "query": str(result.get("query") or question).strip() or question,
+        "top_k": KG_HYBRID_DEFAULT_TOP_K,
+        "candidate_k": KG_HYBRID_DEFAULT_CANDIDATE_K,
+        "offset": max(0, int_or_default(next_offset, 0)),
+        "filters": normalize_kg_search_filters(result.get("applied_filters")),
+        "expand_top_k": kg_expand_top_k_for_question(question),
+        "reason": "continue previous ranked candidate pool",
+    }
+    return {
+        "router": "deterministic_candidate_pagination",
+        "needs_tools": True,
+        "calls": [call],
+        "plan_type": infer_plan_type([call]),
+        "confidence": 1.0,
+        "answer_directly_reason": "",
+    }
+
+
+def latest_hybrid_search_observation() -> dict[str, Any] | None:
+    rows = read_jsonl(_app_value("TOOL_OBSERVATIONS", TOOL_OBSERVATIONS))
+    for row in reversed(rows):
+        result = row.get("result") if isinstance(row, dict) else None
+        if row.get("tool") == "kg.hybrid_search" and isinstance(result, dict) and isinstance(result.get("pagination"), dict):
+            return row
+    return None
 
 def contextual_kg_followup_question(question: str) -> str:
     if not (kg_followup_request(question) or doc_scope_only_statement(question)):
@@ -1456,6 +1619,10 @@ def infer_aggregate_target(question: str) -> str:
         term in question for term in ["专利", "文献"]
     ):
         return "doc_id"
+    # NOTE: deliberately NOT the full MARINE_QUESTION_TERMS union — this branch
+    # decides the counting TARGET, and broad marine context words (甲板/货舱/
+    # 船厂...) must not hijack material/substrate-count questions that merely
+    # mention a marine setting. Keep the original narrow set.
     if any(term in lower for term in ["application family", "application field", "use field", "marine"]) or any(
         term in question for term in ["应用领域", "应用场景", "船舶", "海洋"]
     ):
@@ -1504,6 +1671,187 @@ def aggregate_group_by_for_question(question: str, target: str, intent: str) -> 
         return ["test_method"]
     return [target]
 
+# Fiber-domain slot mapping. These constants are shared by the domain-detection
+# signal lists below AND the deterministic aggregate slot fallback, so detection
+# and slot-filling can never disagree again about what counts as a fiber
+# question (2026-06-12 incident: detection knew 光纤, the slot fallback did not,
+# so an all-empty filter set counted the whole KG as "光纤专利 554 篇").
+FIBER_QUESTION_TERMS_EN = [
+    "optical fiber",
+    "optical fibre",
+    "fiber coil",
+    "fibre coil",
+    "fiber ring",
+    "fibre ring",
+    "polarization-maintaining fiber",
+    "polarization maintaining fiber",
+    "pm fiber",
+    "fiber-optic gyroscope",
+    "fiber optic gyroscope",
+]
+FIBER_QUESTION_TERMS_ZH = [
+    "光纤",
+    "光纤环",
+    "保偏光纤",
+    "光纤陀螺",
+]
+def fiber_domain_question(question: str) -> bool:
+    lower = str(question or "").lower()
+    if any(term in lower for term in FIBER_QUESTION_TERMS_EN + ["fiber optic", "fibre optic"]):
+        return True
+    return any(term in question for term in FIBER_QUESTION_TERMS_ZH)
+
+
+# Anaphora / continuation markers: a count question carrying one of these
+# probably leans on the previous turn ("那按公司分呢", "其中多少是船舶的"),
+# so the prior-turn router hint must be kept for it.
+AGGREGATE_FOLLOWUP_MARKERS = ("那", "这", "其中", "它", "上面", "刚才", "之前", "继续", "再", "还", "也", "呢", "换", "改")
+
+
+def aggregate_question_self_contained(question: str) -> bool:
+    """True when a count question carries its own scope — no anaphora and
+    either a deterministic domain filter or an explicit whole-KG phrasing.
+    Only those questions skip the conversational hint; context-dependent
+    count follow-ups keep it."""
+    bare = str(question or "").strip()
+    if any(marker in bare for marker in AGGREGATE_FOLLOWUP_MARKERS):
+        return False
+    filters = aggregate_filters_for_question(bare)
+    if any(values for values in filters.values() if isinstance(values, list) and values):
+        return True
+    return kg_global_container_question(bare)
+
+
+# The KG backend matches application_family by exact lowercase string equality
+# (kg_expand_http_service.application_family_matches) — the lone exception is
+# "marine", which has a hand-written alias set there. Any other value that is
+# not byte-equal to a vocabulary value can never match and silently yields an
+# empty result (2026-06-12 incident: application_family=['optical fiber'] → 0
+# while the library holds optical_fiber_coating/optical_fiber_ribbon/...).
+KG_FILTER_VOCAB_PATH = Path(
+    os.environ.get(
+        "COATING_KG_FILTER_VOCAB",
+        str(Path(__file__).resolve().parent.parent / "config" / "kg_filter_vocab.json"),
+    )
+)
+APPLICATION_FAMILY_EXACT_MATCH_EXEMPT = {"marine"}
+_KG_FILTER_VOCAB_CACHE: tuple[float, dict[str, set[str]]] | None = None
+_KG_FILTER_VOCAB_WARNED = False
+
+
+def load_kg_filter_vocab() -> dict[str, set[str]]:
+    """mtime-keyed cache: re-running scripts/export_kg_vocab.py takes effect
+    without a service restart, and a missing/corrupt file degrades to an
+    inactive guard (logged once) instead of breaking routing."""
+    global _KG_FILTER_VOCAB_CACHE, _KG_FILTER_VOCAB_WARNED
+    try:
+        mtime = KG_FILTER_VOCAB_PATH.stat().st_mtime
+    except OSError:
+        mtime = -1.0
+    if _KG_FILTER_VOCAB_CACHE is not None and _KG_FILTER_VOCAB_CACHE[0] == mtime:
+        return _KG_FILTER_VOCAB_CACHE[1]
+    vocab: dict[str, set[str]] = {}
+    if mtime >= 0:
+        try:
+            raw = json.loads(KG_FILTER_VOCAB_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+        for dimension, values in (raw.get("dimensions") or {}).items():
+            if isinstance(values, (dict, list)):
+                vocab[dimension] = {str(v).strip().lower() for v in values if str(v).strip()}
+    if not vocab.get("application_family") and not _KG_FILTER_VOCAB_WARNED:
+        _KG_FILTER_VOCAB_WARNED = True
+        print(
+            f"[routing] kg_filter_vocab missing/empty at {KG_FILTER_VOCAB_PATH}; "
+            "application_family vocabulary guard is INACTIVE — run scripts/export_kg_vocab.py",
+            file=sys.stderr,
+        )
+    _KG_FILTER_VOCAB_CACHE = (mtime, vocab)
+    return vocab
+
+
+# Closed application_family enum for the router function-calling schema.
+# Keys + descriptions come from config/application_family_enum.json (generated
+# from the 2026-06-12 taxonomy; descriptions are probe-tested: 45 customer
+# phrasings × 3 blind routers → 42/45 correct, 45/45 unanimous). The LLM picks
+# from this list instead of inventing values, so router output is byte-equal
+# to the remapped data and the backend's exact matcher never misses.
+APPLICATION_FAMILY_ENUM_PATH = Path(
+    os.environ.get(
+        "COATING_APP_FAMILY_ENUM",
+        str(Path(__file__).resolve().parent.parent / "config" / "application_family_enum.json"),
+    )
+)
+_APP_FAMILY_ENUM_CACHE: tuple[float, list[dict[str, str]]] | None = None
+
+
+def load_application_family_enum() -> list[dict[str, str]]:
+    global _APP_FAMILY_ENUM_CACHE
+    try:
+        mtime = APPLICATION_FAMILY_ENUM_PATH.stat().st_mtime
+    except OSError:
+        mtime = -1.0
+    if _APP_FAMILY_ENUM_CACHE is not None and _APP_FAMILY_ENUM_CACHE[0] == mtime:
+        return _APP_FAMILY_ENUM_CACHE[1]
+    families: list[dict[str, str]] = []
+    if mtime >= 0:
+        try:
+            raw = json.loads(APPLICATION_FAMILY_ENUM_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+        for item in raw.get("families") or []:
+            key = str(item.get("key") or "").strip()
+            description = str(item.get("description") or "").strip()
+            if key:
+                families.append({"key": key, "description": description})
+    _APP_FAMILY_ENUM_CACHE = (mtime, families)
+    return families
+
+
+def application_family_schema_property() -> dict[str, Any]:
+    """Schema fragment for filters.application_family: closed enum when the
+    config is present, the legacy free-form shape when it is not (the P0
+    vocabulary guard still backstops free-form values at sanitize time)."""
+    families = load_application_family_enum()
+    if not families:
+        return {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "application domain, e.g. ['marine'], ['automotive']",
+        }
+    return {
+        "type": "array",
+        "items": {"type": "string", "enum": [f["key"] for f in families]},
+        "description": (
+            "application domain family — CLOSED LIST, pick the key(s) whose description matches the question. "
+            + " | ".join(f"{f['key']}: {f['description']}" for f in families)
+        ),
+    }
+
+
+def validate_aggregate_filter_vocab(filters: dict[str, Any]) -> list[str]:
+    """Post-route vocabulary guard. Values the backend's exact matcher can never
+    match are demoted to substrates (the only dimension with normalized fuzzy
+    matching), instead of silently producing a false-negative count.
+    No-op when the vocabulary file is absent. Returns warnings for the trace."""
+    known = load_kg_filter_vocab().get("application_family")
+    if not known:
+        return []
+    kept: list[str] = []
+    moved: list[str] = []
+    for value in filters.get("application_family") or []:
+        lowered = str(value).strip().lower()
+        if lowered in APPLICATION_FAMILY_EXACT_MATCH_EXEMPT or lowered in known:
+            kept.append(value)
+        else:
+            moved.append(value)
+    if not moved:
+        return []
+    filters["application_family"] = kept
+    append_unique_values(filters.setdefault("substrates", []), moved)
+    return [f"application_family values not in vocabulary, retried as substrates: {moved}"]
+
+
 def aggregate_filters_for_question(question: str) -> dict[str, Any]:
     filters = normalize_kg_aggregate_filters(None)
     lower = str(question or "").lower()
@@ -1517,45 +1865,39 @@ def aggregate_filters_for_question(question: str) -> dict[str, Any]:
         "corrosion" in lower or any(term in question for term in ["防腐", "耐腐蚀", "盐雾"])
     ):
         filters["properties"] = ["corrosion_protection"]
-    if any(
-        term in lower
-        for term in [
-            "marine",
-            "ship",
-            "vessel",
-            "naval",
-            "offshore",
-            "deck",
-            "cargo hold",
-            "cargo tank",
-            "dry dock",
-            "dry-dock",
-            "shipyard",
-            "splash zone",
-        ]
-    ) or any(
-        term in question for term in ["船舶", "海洋", "海工", "海上", "压载舱", "甲板", "油舱", "货舱", "坞修", "船坞", "船厂", "浪溅区"]
+    if any(term in lower for term in MARINE_QUESTION_TERMS_EN) or any(
+        term in question for term in MARINE_QUESTION_TERMS_ZH
     ):
         filters["application_family"] = ["marine"]
+    if fiber_domain_question(question):
+        # Post-taxonomy: fiber questions map to the canonical family key, which
+        # exact-matches the remapped data. The substrate-variant injection this
+        # replaced (P0-2) is no longer needed and would over-constrain (AND
+        # across dimensions) now that the family route exists.
+        append_unique_values(filters["application_family"], ["optical_fiber"])
     if any(term in lower for term in ["resin", "binder"]) or "树脂" in question:
         filters["material_roles"] = ["resin"]
     elif any(term in lower for term in ["pigment", "pigments"]) or "颜料" in question:
-        filters["material_roles"] = ["pigments"]
+        filters["material_roles"] = ["pigment"]
     elif any(term in lower for term in ["filler", "fillers"]) or "填料" in question:
-        filters["material_roles"] = ["fillers"]
+        filters["material_roles"] = ["filler"]
     elif any(term in lower for term in ["additive", "additives"]) or "助剂" in question:
-        filters["material_roles"] = ["additives"]
+        filters["material_roles"] = ["additive"]
     return filters
 
 def merge_aggregate_domain_filters(question: str, raw_filters: Any) -> dict[str, Any]:
     """Normalize aggregate filters to a stable, property-family-based signal.
 
-    Problem this fixes: the LLM picks aggregate filters ad-hoc each turn, so
-    "船舶防腐/防污" counts drifted and were wrong. Naively unioning the curated
-    marine families on top of the LLM's filters made it WORSE, because the KG
-    backend ANDs across the listed property_families (so [marine_antifouling,
-    marine_fouling_release] → 0) and ANDs property_families + application_family
-    + the LLM's bare `properties` (so corrosion → 1 instead of ~34).
+    Historical background (2026-05, marine count-collapse fix): the LLM picked
+    aggregate filters ad-hoc each turn, so "船舶防腐/防污" counts drifted and
+    were wrong. At the time, naively unioning the curated marine families on
+    top of the LLM's filters made it worse, because the KG backend combined
+    the listed property_families conjunctively ([marine_antifouling,
+    marine_fouling_release] collapsed to 0) and likewise ANDed
+    property_families + application_family + the LLM's bare `properties`
+    (corrosion → 1 instead of ~34). The design below dates from that fix;
+    `property_canonical_ids_soft` is the OR-semantics channel chosen to
+    express "any property in the family".
 
     Chosen semantics (user decision): "property-family" count — a record counts
     if it carries ANY property in the concept's canonical-id set. The cleanest
@@ -1569,9 +1911,18 @@ def merge_aggregate_domain_filters(question: str, raw_filters: Any) -> dict[str,
         the user wants the family count, not marine ∩ family which is stricter)
 
     For non-marine-family questions we keep the LLM's filters and merge the
-    other curated dims (material_roles etc.) by union.
+    other curated dims (material_roles etc.) by union, except for hard
+    epoxy/zinc-rich/primer slot queries. In that case "marine" is soft context
+    and "zinc-rich primer" is a coating-system facet, not a material role, so
+    keeping those aggregate filters makes the count side-channel contradict the
+    direct formulation search.
     """
     merged = normalize_kg_aggregate_filters(raw_filters)
+    if hard_epoxy_zinc_primer_facets(analyze_query_facets(question)):
+        merged["application_family"] = []
+        merged["material_roles"] = []
+        return merged
+
     families = marine_property_families_for_question(question)
     if families:
         soft_ids = property_canonical_ids_for_families(families)
@@ -1603,8 +1954,8 @@ def build_aggregate_call(question: str) -> dict[str, Any]:
         filters["doc_ids"] = []
     if target == "resin_system":
         filters["material_roles"] = []
-        if any(term in context_question.lower() for term in ["marine", "ship", "vessel", "hull"]) or any(
-            term in context_question for term in ["船舶", "船用", "海洋", "船体", "船壳"]
+        if any(term in context_question.lower() for term in MARINE_QUESTION_TERMS_EN) or any(
+            term in context_question for term in MARINE_QUESTION_TERMS_ZH
         ):
             append_unique_values(filters["application_family"], ["marine"])
         if any(term in context_question.lower() for term in ["antifouling", "fouling", "biofouling"]) or any(
@@ -1623,7 +1974,7 @@ def build_aggregate_call(question: str) -> dict[str, Any]:
         "filters": filters,
         "group_by": aggregate_group_by_for_question(context_question, target, intent),
         "limit": 50,
-        "include_examples": True,
+        "include_examples": intent != "distinct_count",
         "reason": "statistical coating KG aggregate fallback",
     }
 
@@ -1725,17 +2076,7 @@ def wants_coating_kg_search(question: str) -> bool:
         "fuel resistance",
         "chemical resistance",
         "solvent resistance",
-        "optical fiber",
-        "optical fibre",
-        "fiber coil",
-        "fibre coil",
-        "fiber ring",
-        "fibre ring",
-        "polarization-maintaining fiber",
-        "polarization maintaining fiber",
-        "pm fiber",
-        "fiber-optic gyroscope",
-        "fiber optic gyroscope",
+        *FIBER_QUESTION_TERMS_EN,
         "fog",
         "primary coating",
         "secondary coating",
@@ -1777,23 +2118,10 @@ def wants_coating_kg_search(question: str) -> bool:
         "硅氧烷",
         "硅树脂",
         "硅烷",
-        "船舶",
-        "海洋",
-        "海工",
-        "甲板",
-        "压载舱",
-        "外板",
-        "水线区",
-        "油舱",
-        "货舱",
-        "船坞",
-        "坞修",
-        "船厂",
-        "浪溅区",
+        *MARINE_QUESTION_TERMS_ZH,
         "防生物",
         "防生物附着",
         "抗生物附着",
-        "防海生物附着",
         "生物污损",
         "污损生物",
         "耐水",
@@ -1826,10 +2154,7 @@ def wants_coating_kg_search(question: str) -> bool:
         "表面容忍",
         "耐燃油",
         "化学品",
-        "光纤",
-        "光纤环",
-        "保偏光纤",
-        "光纤陀螺",
+        *FIBER_QUESTION_TERMS_ZH,
         "涂覆",
         "涂覆材料",
         "胶粘剂",
@@ -1851,91 +2176,12 @@ def wants_coating_kg_search(question: str) -> bool:
     search_intents += ["哪里", "提到", "应用", "测试", "方法", "证据", "统计", "多少", "对比", "讲解", "解读", "介绍", "具体", "给一篇"]
     return domain_hits >= 1 and any(term in lower or term in question for term in search_intents)
 
-def available_tools_for_router() -> list[dict[str, Any]]:
-    return [
-        {
-            "name": "kg.expand_hyperedge_multihop",
-            "description": (
-                "Read-only Coating KG expansion. Use only when the user provides explicit hyperedge object_ids "
-                "like HE_351_WO2019126498A1_0001 or DOC::HYP_..., or when a previous KG retrieval already "
-                "returned object_ids. It expands object_ids into compact facts, evidence page/table/quote, and patent metadata. "
-                "Do not use it for natural-language KG search."
-            ),
-            "input_schema": {
-                "object_ids": ["hyperedge object_id strings"],
-                "max_context_facts": 20,
-                "max_evidence_per_item": 5,
-            },
-        },
-        {
-            "name": "kg.hybrid_search",
-            "description": (
-                "Read-only Coating KG natural-language search. Use for coating-domain questions about materials, "
-                "substrates, properties, tests, examples, patents, performance, or evidence when the user does not "
-                "already provide a hyperedge object_id. It returns ranked hyperedge object_ids and score metadata only; "
-                "it does not expand evidence and does not answer the user."
-            ),
-            "input_schema": {
-                "query": "natural-language coating KG search query",
-                "top_k": KG_HYBRID_DEFAULT_TOP_K,
-                "candidate_k": KG_HYBRID_DEFAULT_CANDIDATE_K,
-                "filters": {
-                    "doc_ids": [],
-                    "properties": [],
-                    "polarity": [],
-                    "example_kind": [],
-                    "qa_policy": "include_all",
-                    "application_family": [],
-                    "applications": [],
-                    "substrates": [],
-                    "test_methods": [],
-                    "test_standards": [],
-                    "material_roles": [],
-                    "assignees": [],
-                },
-            },
-        },
-        {
-            "name": "kg.doc_field_scan",
-            "description": (
-                "Read-only doc-scoped Coating KG field scan. Use when a hard doc scope is known and the user asks "
-                "for facts, protocols, test conditions, formulations, layers, panels, materials, results, or evidence "
-                "inside that one patent. It scans raw hyperedges, facts, and evidence fields without open top-k retrieval."
-            ),
-            "input_schema": {
-                "doc_ids": ["WO publication or internal doc ids"],
-                "query": "document-local fact/evidence question",
-                "field_groups": DOC_FIELD_SCAN_GROUPS,
-                "limit": 200,
-                "include_evidence": True,
-            },
-        },
-        {
-            "name": "kg.sql_aggregate",
-            "description": (
-                "Read-only controlled-template Coating KG aggregation. Use for statistical questions such as "
-                "how many distinct test methods, list all materials, group counts by assignee/property, or amount "
-                "distributions. It returns compact aggregate rows with counts and examples; never generate raw SQL."
-            ),
-            "input_schema": {
-                "intent": "distinct_count | list_distinct | group_count | numeric_distribution",
-                "target": "test_method | property | material | material_role | substrate | assignee | doc_id | example_kind | polarity | amount | application_family | formulation",
-                "filters": {
-                    "doc_ids": [],
-                    "properties": [],
-                    "material_roles": [],
-                    "assignees": [],
-                    "application_family": [],
-                    "polarity": [],
-                    "example_kind": [],
-                    "qa_policy": "include_all",
-                },
-                "group_by": [],
-                "limit": 50,
-                "include_examples": True,
-            },
-        },
-    ]
+ROUTER_TOOL_NAMES = frozenset({
+    "kg.hybrid_search",
+    "kg.sql_aggregate",
+    "kg.doc_field_scan",
+    "kg.expand_hyperedge_multihop",
+})
 
 def extract_json_object(text: str) -> dict[str, Any]:
     cleaned = text.strip()
@@ -1958,7 +2204,7 @@ def extract_json_object(text: str) -> dict[str, Any]:
         return {}
 
 def sanitize_tool_routing(raw: dict[str, Any], question: str, *, router: str) -> dict[str, Any]:
-    allowed = {tool["name"] for tool in available_tools_for_router()}
+    allowed = ROUTER_TOOL_NAMES
     calls: list[dict[str, Any]] = []
     for call in raw.get("calls", []):
         if not isinstance(call, dict):
@@ -1976,28 +2222,25 @@ def sanitize_tool_routing(raw: dict[str, Any], question: str, *, router: str) ->
             object_ids = normalize_object_ids(call.get("object_ids"), f"{query}\n{question}")
             if not object_ids:
                 continue
-            cleaned_call["object_ids"] = object_ids[:20]
+            cleaned_call["object_ids"] = object_ids[:30]
             cleaned_call["max_context_facts"] = int_or_default(call.get("max_context_facts"), 20)
             cleaned_call["max_evidence_per_item"] = int_or_default(call.get("max_evidence_per_item"), 5)
         elif tool == "kg.hybrid_search":
-            cleaned_call["query"] = build_kg_search_query(query, question)[:500]
-            cleaned_call["top_k"] = int_or_default(call.get("top_k"), KG_HYBRID_DEFAULT_TOP_K)
-            cleaned_call["candidate_k"] = int_or_default(
-                call.get("candidate_k"),
+            # Keep independent sub-queries independent. The full user question is
+            # applied to structured filters below; injecting it into every text
+            # query collapses formulation and performance searches into duplicates.
+            cleaned_call["query"] = build_kg_search_query(query)[:500]
+            # Keep the candidate/verification window stable across LLM tool calls.
+            cleaned_call["top_k"] = KG_HYBRID_DEFAULT_TOP_K
+            cleaned_call["candidate_k"] = KG_HYBRID_DEFAULT_CANDIDATE_K
+            cleaned_call["offset"] = clamp_int(
+                call.get("offset"),
+                0,
+                0,
                 KG_HYBRID_DEFAULT_CANDIDATE_K,
             )
             cleaned_call["filters"] = kg_search_filters_for_question(question, call.get("filters"))
-            if "expand_top_k" in call:
-                requested_expand_top_k = clamp_int(call.get("expand_top_k"), 0, 0, 8)
-                if (
-                    analyze_kg_query_semantics(question).get("guard")
-                    or patent_explanation_request(question)
-                    or patent_technology_search_request(question)
-                ):
-                    requested_expand_top_k = max(requested_expand_top_k, kg_expand_top_k_for_question(question))
-                cleaned_call["expand_top_k"] = requested_expand_top_k
-            else:
-                cleaned_call["expand_top_k"] = kg_expand_top_k_for_question(question)
+            cleaned_call["expand_top_k"] = kg_expand_top_k_for_question(question)
         elif tool == "kg.doc_field_scan":
             cleaned_call["doc_ids"] = normalize_string_list(call.get("doc_ids"))[:5]
             cleaned_call["field_groups"] = normalize_string_list(call.get("field_groups")) or DOC_FIELD_SCAN_GROUPS
@@ -2015,13 +2258,43 @@ def sanitize_tool_routing(raw: dict[str, Any], question: str, *, router: str) ->
             cleaned_call["intent"] = intent
             cleaned_call["target"] = target
             cleaned_call["filters"] = merge_aggregate_domain_filters(question, call.get("filters"))
+            vocab_warnings = validate_aggregate_filter_vocab(cleaned_call["filters"])
+            if vocab_warnings:
+                cleaned_call["warnings"] = vocab_warnings
             group_by = normalize_string_list(call.get("group_by"))
             cleaned_call["group_by"] = [value for value in group_by if value in AGGREGATE_TARGETS][:3]
             if not cleaned_call["group_by"]:
                 cleaned_call["group_by"] = aggregate_group_by_for_question(question, target, intent)
             cleaned_call["limit"] = clamp_int(call.get("limit"), 50, 1, 200)
-            cleaned_call["include_examples"] = True
+            # distinct_count only needs the number; examples are a truncated
+            # sample that tempts the answer LLM into pseudo-aggregations
+            # (2026-06-12: "高频/中频" assignee tiers extrapolated from top-50).
+            # All other intents keep examples — their answers cite items.
+            cleaned_call["include_examples"] = intent != "distinct_count"
         calls.append(cleaned_call)
+    inherited_assignees: list[str] = []
+    for call in calls:
+        if call.get("tool") != "kg.hybrid_search":
+            continue
+        append_unique_values(inherited_assignees, (call.get("filters") or {}).get("assignees") or [])
+    if inherited_assignees:
+        for call in calls:
+            if call.get("tool") != "kg.hybrid_search":
+                continue
+            filters = dict(call.get("filters") or {})
+            if not filters.get("assignees"):
+                filters["assignees"] = list(inherited_assignees)
+            call["filters"] = filters
+    deduped_calls: list[dict[str, Any]] = []
+    seen_calls: set[str] = set()
+    for call in calls:
+        comparable = {key: value for key, value in call.items() if key not in {"reason", "warnings"}}
+        call_key = json.dumps(comparable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if call_key in seen_calls:
+            continue
+        seen_calls.add(call_key)
+        deduped_calls.append(call)
+    calls = deduped_calls
     confidence = raw.get("confidence", 0)
     try:
         confidence = float(confidence)
@@ -2044,7 +2317,7 @@ def fallback_tool_routing(question: str, *, reason: str = "keyword fallback") ->
             {
                 "tool": "kg.expand_hyperedge_multihop",
                 "query": question,
-                "object_ids": object_ids[:20],
+                "object_ids": object_ids[:30],
                 "max_context_facts": 20,
                 "max_evidence_per_item": 5,
                 "reason": "explicit hyperedge object_id fallback",
@@ -2126,9 +2399,14 @@ def _kg_tools_openai_format() -> list[dict[str, Any]]:
                             "type": "integer",
                             "description": f"number of top hits to return (default {KG_HYBRID_DEFAULT_TOP_K})",
                         },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "candidate-pool page offset; reuse pagination.next_offset for more results",
+                        },
                         "expand_top_k": {
                             "type": "integer",
-                            "description": "expand evidence for this many top hits (6 if user wants an answer with evidence, 0 if user only wants IDs)",
+                            "description": "expand evidence for this many top hits (30 if user wants an answer with evidence, 0 if user only wants IDs)",
                         },
                         "filters": {
                             "type": "object",
@@ -2136,13 +2414,20 @@ def _kg_tools_openai_format() -> list[dict[str, Any]]:
                                 "Structured filters that narrow retrieval. Fill any that the user "
                                 "mentioned, e.g. user says '碳纤维基底' → substrates=['carbon fiber']; "
                                 "'船舶/海洋' → application_family=['marine']; '富锌底漆' → "
-                                "material_roles=['resin','zinc-rich primer']."
+                                "material_roles must use controlled roles such as ['resin'], ['pigment'], or ['filler']."
                             ),
                             "properties": {
                                 "doc_ids": {"type": "array", "items": {"type": "string"}, "description": "specific patent doc_ids to restrict to"},
                                 "substrates": {"type": "array", "items": {"type": "string"}, "description": "substrate / base material. Include likely spaced/unspaced, US/UK, and common word-order variants when applicable, e.g. ['cement fiber board','cement fiberboard','cement fibre board','cement fibreboard','fiber cement board','fiber cementboard','fibre cement board','fibre cementboard'] or ['carbon fiber','carbon fibre']"},
-                                "application_family": {"type": "array", "items": {"type": "string"}, "description": "application domain, e.g. ['marine'], ['automotive'], ['aerospace']"},
-                                "material_roles": {"type": "array", "items": {"type": "string"}, "description": "material role in formulation, e.g. ['resin'], ['pigment'], ['filler']"},
+                                "application_family": application_family_schema_property(),
+                                "material_roles": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": ["resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"],
+                                    },
+                                    "description": "controlled material roles only; coating-system words such as epoxy or zinc-rich primer are invalid",
+                                },
                                 "properties": {"type": "array", "items": {"type": "string"}, "description": "performance properties, e.g. ['corrosion_protection'], ['adhesion']"},
                                 "test_methods": {"type": "array", "items": {"type": "string"}, "description": "test methods, e.g. ['salt spray'], ['ASTM B117']"},
                                 "test_standards": {"type": "array", "items": {"type": "string"}, "description": "test standards, e.g. ['ISO 12944']"},
@@ -2203,8 +2488,15 @@ def _kg_tools_openai_format() -> list[dict[str, Any]]:
                             "properties": {
                                 "doc_ids": {"type": "array", "items": {"type": "string"}, "description": "specific patent doc_ids"},
                                 "substrates": {"type": "array", "items": {"type": "string"}, "description": "substrate / base material. Include likely spaced/unspaced, US/UK, and common word-order variants when applicable, e.g. ['cement fiber board','cement fiberboard','cement fibre board','cement fibreboard','fiber cement board','fiber cementboard','fibre cement board','fibre cementboard'] or ['carbon fiber','carbon fibre']"},
-                                "application_family": {"type": "array", "items": {"type": "string"}, "description": "application domain, e.g. ['marine'], ['automotive']"},
-                                "material_roles": {"type": "array", "items": {"type": "string"}, "description": "material role, e.g. ['resin'], ['pigment']"},
+                                "application_family": application_family_schema_property(),
+                                "material_roles": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": ["resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"],
+                                    },
+                                    "description": "controlled material role",
+                                },
                                 "properties": {"type": "array", "items": {"type": "string"}, "description": "performance property, e.g. ['corrosion_protection']"},
                                 "test_methods": {"type": "array", "items": {"type": "string"}, "description": "test method"},
                                 "test_standards": {"type": "array", "items": {"type": "string"}, "description": "test standard, e.g. ['ISO 12944'], ['ASTM B117']"},
@@ -2275,19 +2567,24 @@ def _router_system_prompt() -> str:
     when to use a tool vs answer directly, plus a few routing hints.
     """
     return (
-        "You are a router for a coating and optical-fiber coating/adhesive materials knowledge-graph assistant.\n"
-        "For ANY question about coatings, paints, primers, resins, fillers, pigments, "
-        "substrates, performance, tests, patents, formulations, optical fibers, fiber coils, "
-        "polarization-maintaining fibers, fiber-optic gyroscopes, coating materials, adhesives, or evidence — you MUST "
-        "call a KG tool. Do not answer from your own knowledge.\n"
-        "Only skip tools for: greetings, memory-only questions (\"我之前问过什么\"), or "
-        "genuinely off-domain queries.\n"
+        "You are the tool router for a comprehensive coating-industry knowledge assistant.\n"
+        "The assistant covers the full coating field: architectural, automotive OEM and refinish, marine, protective, "
+        "industrial, powder, wood, packaging, coil, aerospace, electronics, optical-fiber coatings and adhesives, "
+        "plus formulations, raw materials, substrates, properties, tests, patents, evidence, and related applications. "
+        "Marine and optical-fiber coatings are specialist branches, not the default domain.\n"
+        "For ANY professional coating-domain question, you MUST call a KG tool before answering. Do not answer professional "
+        "facts from your own knowledge at the routing stage. Only skip tools for greetings, memory-only questions, or "
+        "genuinely off-domain queries. For greetings, respond briefly as a comprehensive coating-industry knowledge assistant; "
+        "do not foreground marine or optical-fiber coatings.\n"
+        "Preserve conversational intent. A short follow-up must inherit the prior application, product, company, patent, "
+        "performance target, and requested operation unless the user explicitly changes them. If the user asks you to choose "
+        "a scenario, choose one consistent with the active conversation; never jump to another coating sector.\n"
         "Routing hints:\n"
-        "- explicit hyperedge object_id (HE_xxx_xxx) → kg_expand_hyperedge_multihop\n"
-        "- 'how many', 'list all', 'count', '统计', '多少', '几种' → kg_sql_aggregate\n"
-        "- active scope on one patent + doc-local question (panel, layer, protocol) → kg_doc_field_scan\n"
-        "- everything else coating-domain → kg_hybrid_search with expand_top_k=6\n"
-        "For Chinese coating or optical-fiber material queries, include useful English search terms in the query argument."
+        "- explicit hyperedge object_id (HE_xxx_xxx) -> kg_expand_hyperedge_multihop\n"
+        "- 'how many', 'list all', 'count', '统计', '多少', '几种' -> kg_sql_aggregate\n"
+        "- active scope on one patent + doc-local question (panel, layer, protocol) -> kg_doc_field_scan\n"
+        "- everything else coating-domain -> kg_hybrid_search with expand_top_k=30\n"
+        "For Chinese coating queries, include useful English search terms in the query argument."
     )
 
 
@@ -2407,6 +2704,13 @@ def route_tools_with_qwen(
     decision = sanitize_tool_routing(raw_decision, question, router="llm-function-calling")
     decision["elapsed_ms"] = round((time.time() - started) * 1000)
     decision["model"] = cfg["model"]
+    # When hints were injected, the full router input goes into the trace so
+    # routing drift is replayable — the bare `question` field alone hid the
+    # hint text that explained why identical questions routed differently.
+    # Bare questions add nothing (question == user_content), so skip them to
+    # keep the recorded decisions (and the packet built from them) small.
+    if prefix_parts:
+        decision["router_user_content"] = user_content[:600]
 
     usage = response.get("usage") or {}
     decision["prompt_cache_hit_tokens"] = usage.get("prompt_cache_hit_tokens", 0)
@@ -2551,6 +2855,10 @@ def _check_keyword_routes(ctx: RouterContext) -> dict[str, Any] | None:
     """
     if ctx.scope_resolution.get("scope_action") == "clarify":
         return clarify_scope_route(ctx.question, ctx.scope_resolution)
+    if pagination_followup_request(ctx.question):
+        previous = latest_hybrid_search_observation()
+        if previous is not None:
+            return pagination_route_from_observation(ctx.question, previous)
     if should_use_doc_field_scan(ctx.routing_question, ctx.scope_resolution):
         return doc_field_scan_route(ctx.routing_question, ctx.scope_resolution)
     if ctx.scope_resolution.get("scope_action") in {"set_new", "use_history"} and doc_scope_only_statement(ctx.question):
@@ -2582,7 +2890,13 @@ def _run_llm_with_tools(ctx: RouterContext) -> dict[str, Any]:
          answers from its own knowledge" failure mode.
     """
     scope_hint = _build_scope_hint(ctx)
-    conv_hint = _build_conversational_hint(ctx)
+    # Self-contained aggregate questions skip the prior-turn hint: injecting
+    # varying history made the SAME question route to different filter
+    # dimensions across turns (2026-06-12 trace: 4 asks of "你有多少篇光纤专利"
+    # produced 3 different filter sets). Context-dependent count follow-ups
+    # ("那按公司分呢") keep the hint — they need the prior turn to make sense.
+    suppress_hint = wants_kg_aggregate(ctx.question) and aggregate_question_self_contained(ctx.question)
+    conv_hint = None if suppress_hint else _build_conversational_hint(ctx)
     try:
         decision = route_tools_with_qwen(ctx.question, scope_hint=scope_hint, conv_hint=conv_hint)
     except Exception as exc:  # noqa: BLE001

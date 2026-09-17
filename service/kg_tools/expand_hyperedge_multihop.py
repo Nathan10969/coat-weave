@@ -22,7 +22,7 @@ from typing import Any
 OBJECT_TYPE = "hyperedge"
 SCHEMA_VERSION = "hyperedge_multihop_expand_v1"
 
-DEFAULT_BASE = Path(__file__).resolve().parents[1] / "runtime_data" / "embedding"
+DEFAULT_BASE = Path(__file__).resolve().parents[1] / "data" / "embedding"
 DEFAULT_PG_ENV = DEFAULT_BASE / "pgvector.env"
 DEFAULT_KG_DIR = DEFAULT_BASE / "data" / "kg_286_aggregate"
 DEFAULT_KG_ZIPS = (
@@ -95,6 +95,13 @@ class KgStore:
         doc_id = doc_id_from(row, doc_hint)
         if doc_id:
             self.patent_profiles_by_doc.setdefault(doc_id, dict(row))
+
+
+@dataclass(frozen=True)
+class KgDirectorySource:
+    path: Path
+    collection_id: str | None = None
+    company: str | None = None
 
 
 def main() -> int:
@@ -217,18 +224,28 @@ def normalize_metadata(metadata: Any) -> dict[str, Any]:
     return {}
 
 
-def load_kg_store(kg_dirs: Sequence[Path], kg_zips: Sequence[Path] | None = None) -> KgStore:
+def load_kg_store(
+    kg_dirs: Sequence[Path | KgDirectorySource],
+    kg_zips: Sequence[Path] | None = None,
+) -> KgStore:
     if kg_zips is None:
-        kg_zips = kg_dirs
+        kg_zips = tuple(item.path if isinstance(item, KgDirectorySource) else Path(item) for item in kg_dirs)
         kg_dirs = ()
-    paths = [*kg_dirs, *kg_zips]
+    directory_sources = [
+        item if isinstance(item, KgDirectorySource) else KgDirectorySource(Path(item))
+        for item in kg_dirs
+    ]
+    paths = [*(source.path for source in directory_sources), *kg_zips]
     missing = [str(path) for path in paths if not path.exists()]
     if missing:
         raise FileNotFoundError("KG source not found: " + ", ".join(missing))
 
-    store = KgStore(kg_dirs=[str(path) for path in kg_dirs], kg_zips=[str(path) for path in kg_zips])
-    for path in kg_dirs:
-        load_kg_dir(store, path)
+    store = KgStore(
+        kg_dirs=[str(source.path) for source in directory_sources],
+        kg_zips=[str(path) for path in kg_zips],
+    )
+    for source in directory_sources:
+        load_kg_dir(store, source)
     for path in kg_zips:
         with zipfile.ZipFile(path) as zf:
             for name in sorted(zf.namelist()):
@@ -242,13 +259,13 @@ def load_kg_store(kg_dirs: Sequence[Path], kg_zips: Sequence[Path] | None = None
     return store
 
 
-def load_kg_dir(store: KgStore, path: Path) -> None:
+def load_kg_dir(store: KgStore, source: KgDirectorySource) -> None:
+    path = source.path
     for filename in sorted(KG_FILENAMES):
-        table_path = path / filename
-        if not table_path.exists():
-            continue
-        for row in read_jsonl_path(table_path):
-            add_row(store, filename, row, None)
+        for table_path in sorted(path.rglob(filename)):
+            doc_hint = doc_hint_from_path(table_path, path)
+            for row in read_jsonl_path(table_path):
+                add_row(store, filename, row, doc_hint, source)
 
 
 def read_jsonl_path(path: Path) -> list[dict[str, Any]]:
@@ -270,6 +287,16 @@ def doc_hint_from_member(member: str, filename: str) -> str | None:
     return None
 
 
+def doc_hint_from_path(table_path: Path, root: Path) -> str | None:
+    relative_parts = table_path.relative_to(root).parts
+    if "patents" not in relative_parts:
+        return None
+    index = relative_parts.index("patents")
+    if len(relative_parts) >= index + 4 and relative_parts[index + 2] == "kg_pack":
+        return relative_parts[index + 1]
+    return None
+
+
 def read_zip_jsonl(zf: zipfile.ZipFile, name: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for line in zf.read(name).decode("utf-8-sig", "replace").splitlines():
@@ -278,9 +305,27 @@ def read_zip_jsonl(zf: zipfile.ZipFile, name: str) -> list[dict[str, Any]]:
     return rows
 
 
-def add_row(store: KgStore, filename: str, row: Mapping[str, Any], doc_hint: str | None) -> None:
+def add_row(
+    store: KgStore,
+    filename: str,
+    row: Mapping[str, Any],
+    doc_hint: str | None,
+    source: KgDirectorySource | None = None,
+) -> None:
     if filename == "hyperedges.jsonl":
-        store.add_hyperedge(row, doc_hint)
+        raw = dict(row)
+        if source and source.collection_id and source.company:
+            doc_id = doc_id_from(raw, doc_hint)
+            hyperedge_id = text_or_none(raw.get("hyperedge_id"))
+            if doc_id and hyperedge_id:
+                object_id = f"{source.collection_id}::{source.company}::{doc_id}::{hyperedge_id}"
+                existing_object_id = text_or_none(raw.get("object_id"))
+                if existing_object_id and existing_object_id != object_id:
+                    raise ValueError(
+                        f"conflicting object_id for {doc_id}/{hyperedge_id}: {existing_object_id!r} != {object_id!r}"
+                    )
+                raw["object_id"] = object_id
+        store.add_hyperedge(raw, doc_hint)
     elif filename == "facts.jsonl":
         store.add_fact(row, doc_hint)
     elif filename == "evidence_units.jsonl":

@@ -671,6 +671,13 @@ def validate_stage7_result(
     }
 
 
+def is_stage7_validation_publishable(validation: dict[str, Any] | None) -> bool:
+    """Return whether a Stage 7 result may enter normalized KG artifacts."""
+    if not isinstance(validation, dict):
+        return False
+    return str(validation.get("final_status") or "") in {"ok", "warning"}
+
+
 def _validation_issue(
     code: str,
     severity: str,

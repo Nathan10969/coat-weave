@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import time
@@ -9,6 +10,98 @@ from typing import Any, Iterator
 
 from demo_config import PROJECT_ROOT, ROOT
 from stream_diagnostics import StreamDiagnostics
+
+
+def _has_unresolved_values(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_has_unresolved_values(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_has_unresolved_values(item) for item in value)
+    return value not in (None, "", False, 0)
+
+
+def _expanded_item_is_verified(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if not all(str(item.get(key) or "").strip() for key in ("object_id", "doc_id", "hyperedge_id")):
+        return False
+    evidence = item.get("evidence")
+    if not isinstance(evidence, list) or not any(isinstance(row, dict) for row in evidence):
+        return False
+    return not _has_unresolved_values(item.get("unresolved") or {})
+
+
+def gate_tool_observations_for_answer(observations: Any) -> list[dict[str, Any]]:
+    gated = copy.deepcopy(observations) if isinstance(observations, list) else []
+    for observation in gated:
+        if not isinstance(observation, dict):
+            continue
+        result = observation.get("result")
+        if not isinstance(result, dict):
+            continue
+        tool = observation.get("tool")
+        if tool == "kg.hybrid_search":
+            for item in result.get("items") or []:
+                if isinstance(item, dict):
+                    item.pop("text_preview", None)
+                    item.pop("metadata", None)
+            result["evidence_gate"] = {"status": "candidate_only"}
+            continue
+        if tool != "kg.expand_hyperedge_multihop":
+            continue
+        wrapper_status = str(observation.get("status") or "").strip().casefold()
+        result_status = str(result.get("status") or "").strip().casefold()
+        if wrapper_status != "ok" or result_status not in {"ok", "partial"}:
+            result["items"] = []
+            result["evidence_gate"] = {
+                "status": "blocked",
+                "reason": f"expand_status:{wrapper_status or 'missing'}/{result_status or 'missing'}",
+                "verified_count": 0,
+            }
+            continue
+        items = result.get("items") if isinstance(result.get("items"), list) else []
+        verified = [item for item in items if _expanded_item_is_verified(item)]
+        if not verified:
+            result["items"] = []
+            result["evidence_gate"] = {
+                "status": "blocked",
+                "reason": "no_complete_expanded_items",
+                "verified_count": 0,
+            }
+            continue
+        result["items"] = verified
+        gate = {"status": "verified", "verified_count": len(verified)}
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        summary_missing = int(summary.get("db_missing") or 0)
+        excluded_count = max(len(items) - len(verified), summary_missing)
+        if result_status == "partial" or excluded_count:
+            gate.update(
+                {
+                    "partial": True,
+                    "excluded_count": excluded_count,
+                    "reason": "incomplete_items_excluded",
+                }
+            )
+        result["evidence_gate"] = gate
+    return gated
+
+
+def blocked_evidence_answer(packet: dict[str, Any]) -> str | None:
+    gates: list[str] = []
+    for observation in packet.get("tool_observations") or []:
+        if not isinstance(observation, dict) or observation.get("tool") != "kg.expand_hyperedge_multihop":
+            continue
+        result = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        gate = result.get("evidence_gate") if isinstance(result.get("evidence_gate"), dict) else {}
+        status = str(gate.get("status") or "").strip().casefold()
+        if status:
+            gates.append(status)
+    if "verified" in gates or "blocked" not in gates:
+        return None
+    return (
+        "本轮只完成了候选定位，但原始事实与证据未能完整展开。"
+        "为避免把候选内容误当成证据，我不能在这次回答中给出具体配方、页码或性能结论。"
+    )
 
 
 def _int_env(name: str, default: int) -> int:
@@ -237,13 +330,70 @@ def stream_delta_units(text: str, cfg: dict[str, Any]) -> Iterator[str]:
         yield text[idx : idx + max_chars]
 
 
+AGGREGATE_COUNT_UNITS = {
+    "doc_id": "篇专利（去重）",
+    "formulation": "个配方（去重）",
+}
+
+
+def aggregate_count_statements(packet: dict[str, Any]) -> list[str]:
+    """Code-generated headline sentences for distinct_count aggregates.
+
+    The answer LLM repeatedly mis-attributed counts (2026-06-12: the all-KG
+    total 554 presented as the fiber-patent count; a filter miss presented as
+    "没有收录"). The number, its filter scope, and the empty/全库 qualifier are
+    deterministic facts, so code states them and the LLM only explains.
+    """
+    statements: list[str] = []
+    for row in packet.get("tool_observations") or []:
+        if row.get("tool") != "kg.sql_aggregate" or row.get("status") == "error":
+            continue
+        result = row.get("result") or {}
+        interpretation = result.get("query_interpretation") or {}
+        if interpretation.get("intent") != "distinct_count":
+            continue
+        summary = result.get("summary") or {}
+        count = summary.get("distinct_count")
+        if count is None:
+            continue
+        unit = AGGREGATE_COUNT_UNITS.get(str(interpretation.get("target") or ""), "个不同结果")
+        filters = interpretation.get("filters") or {}
+        applied = {
+            key: values
+            for key, values in filters.items()
+            if isinstance(values, list) and values
+        }
+        scope = "；".join(f"{key}={values}" for key, values in sorted(applied.items()))
+        if not applied:
+            statements.append(
+                f"全库范围（没有应用任何筛选条件）共 {count} {unit}。"
+                "注意：这是整个知识图谱的总数，不能说成问题中某个主题词（如某个领域或基材）的数量。"
+            )
+        elif result.get("status") == "empty":
+            total = result.get("unfiltered_total_distinct_count")
+            total_part = f"全库（无筛选）共 {total} {unit}；" if total is not None else ""
+            warnings = result.get("warnings") or []
+            if any("vocabulary_valid" in str(w) for w in warnings):
+                statements.append(
+                    f"按筛选口径（{scope}）统计命中 0 {unit}。{total_part}"
+                    "该口径下知识图谱当前确实没有匹配记录；如需更宽的范围请换一个筛选口径再问。"
+                )
+            else:
+                statements.append(
+                    f"按筛选口径（{scope}）统计命中 0 {unit}。{total_part}"
+                    "这只说明该过滤条件没有匹配到记录，不能据此断言知识图谱没有收录相关内容。"
+                )
+        else:
+            statements.append(f"按筛选口径（{scope}）统计，知识图谱命中 {count} {unit}。")
+    return statements
+
+
 def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str, str]]:
     system = (
-        "/no_think\n"
         "你是一个项目对话记忆助手。你会收到 Dialogue Memory Packet 和用户当前问题。"
         "请优先使用 active 记忆；不要把 stale 或 superseded 记忆当作当前事实。"
         "如果用户当前消息与记忆冲突，以用户当前消息为准，并简短指出记忆需要更新。"
-        "用中文回答，回答要适合客户 demo：清楚、简洁、可验证。"
+        "用中文回答，回答要清楚、简洁、可验证。"
         "如果 Dialogue Memory Packet 里存在 status=ok 的 tool_observations，"
         "它们就是当前本地 demo 工具层的真实外部调用结果；请优先使用这些工具结果，"
         "不要把它们说成模拟，除非 tool_observations 的 status=error。"
@@ -252,9 +402,6 @@ def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str
         "这个工具只展开已有 object_id，不代表已经完成自然语言 KG 检索。"
         "如果 Dialogue Memory Packet 里 active_scope.policy=hard，回答只能使用 active_scope.doc_ids 范围内的 KG 证据，"
         "如果 tool_observations 里有范围外 doc_id 的证据，必须忽略并说明是 scope mismatch。"
-        "如果 last_scope_resolution.scope_action=clarify，请只提出范围确认问题，不要自行调用或想象 KG 结果。"
-        "对于票价、余票、库存、价格等强实时交易信息，如果只有 web.search 结果而没有专用票务/交易 API，"
-        "请基于搜索结果给出可核验来源链接和谨慎判断；不要直接拒绝联网，也不要编造搜索结果里没有的精确金额。"
     )
     system += (
         "Do not expose internal tool names, endpoint names, Dialogue Memory Packet, tool_observations, System Prompt, "
@@ -293,6 +440,23 @@ def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str
         "summary.matched_hyperedges, item.count, item.doc_count, item.assignee_count, item.assignees, "
         "and item.examples when explaining the result. "
         "Never infer totals from kg.hybrid_search top-k candidates or text_preview.\n"
+        "A tool observation with status=empty is still a real call result (the filters simply matched nothing); "
+        "do not call it simulated and do not treat it as a missing statistic.\n"
+        "If packet.authoritative_count_statements is present, they are the only allowed claims about HOW MANY "
+        "records/patents/formulations the KG holds for this turn: restate them as the headline of the answer. "
+        "You may rephrase fluently, but the numbers, the filter scope, and the 全库/筛选口径/未命中 qualifiers must "
+        "survive intact. Other numbers (grouped bucket counts from kg.sql_aggregate items, evidence page numbers, "
+        "test values) may still be cited from their own observations.\n"
+        "If a kg.sql_aggregate result has status=empty with non-empty applied filters and its warnings indicate a "
+        "possible filter miss (aggregate_filters_returned_empty), describe it as 该筛选口径未命中 — never as "
+        "知识图谱没有收录/不存在/0篇收录. Mention unfiltered_total_distinct_count when present, and give the user one "
+        "concrete rephrasing to copy for the next turn. If instead the warnings say the filters are vocabulary-valid "
+        "(a true zero), you may state plainly that the KG currently has no records under that exact scope, naming the scope.\n"
+        "If summary.applied_filters is empty, the count is the WHOLE KG. Never attribute it to a topic word "
+        "from the question (for example, never present the all-KG total as a 光纤/船舶/某领域 count).\n"
+        "If summary.returned < summary.distinct_count, items and examples are a truncated sample: never derive "
+        "assignee rankings, frequency tiers (高频/中频/低频), or any distribution from them. If the user wants a "
+        "distribution, say it requires a grouped count (例如按申请人分组统计) as a follow-up question.\n"
         "Only packet.tool_observations are authoritative for the current user message. "
         "packet.recent_tool_observations are historical context only; do not use them as current counts, "
         "candidate lists, or evidence unless the user explicitly asks about a previous/just-mentioned result. "
@@ -304,6 +468,11 @@ def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str
         "If a later kg.expand_hyperedge_multihop observation exists for the same question, use that expanded evidence "
         "for page/table/quote citations. Do not cite page/table/quote from kg.hybrid_search alone; say that evidence "
         "expansion still requires kg.expand_hyperedge_multihop on selected object_ids when no expansion is present.\n"
+        "The code-level evidence_gate is authoritative: candidate_only is never evidence, blocked forbids concrete "
+        "formulation/page/performance claims, and only verified expanded items may support those claims. "
+        "If evidence_gate.status=verified and partial=true, the retained items are usable verified evidence: answer from "
+        "those items and briefly disclose that excluded_count incomplete candidates were omitted; never describe the whole "
+        "expansion as failed.\n"
         "If tool_observations include kg.doc_field_scan, treat it as the authoritative source for doc-scoped "
         "field lookup inside active_scope.doc_ids. Use items[].test_method, items[].test_condition, items[].result, "
         "items[].facts, and items[].evidence for the answer. If it returns empty with hyperedges_scanned>0, say the requested field was not "
@@ -317,57 +486,175 @@ def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str
         "semantic_guard.direct_match=false, do not turn related coating evidence into a direct answer. "
         "Say the current expanded evidence did not directly satisfy the required semantic constraint, and separate "
         "related evidence from confirmed matches. If item_warnings mention missing_required_semantic_terms, treat those "
-        "items as related candidates only.\n"
+        "items as related candidates only. If item_warnings contain facet_status=related_match, explain that the term "
+        "appears in the wrong slot (for example carbon fiber filler is not a CFRP substrate). If facet_status=excluded, "
+        "do not cite that item as a candidate for the requested formulation. For numeric hard facets such as salt-spray "
+        ">1000 h or film thickness <50 um, only records satisfying the comparison can be listed as direct matches; "
+        "non-satisfying durations/thicknesses may be mentioned only as counterexamples or coverage gaps.\n"
     )
-    system += (
-        "\nDomain role and customer-facing behavior:\n"
-        "The project-memory instructions above describe context plumbing. In customer-facing answers, act as a "
-        "materials R&D advisor for optical fiber, fiber coils, polarization-maintaining fiber, fiber-optic gyroscopes, "
-        "and related coating materials and adhesives. Your users are R&D directors, materials engineers, optical-fiber "
-        "process engineers, and product owners. Your goal is to turn patents, papers, standards, public product data, "
-        "and internal KG evidence into traceable, judgment-oriented, verifiable R&D information, not search-engine prose.\n"
-        "For fuzzy requests such as 给我一个光纤涂料, 找一个配方, 有没有类似材料, or 这个体系能不能做, first classify the likely "
-        "application scenario instead of giving an isolated formula. Use these categories: Primary coating (glass-fiber "
-        "inner flexible protection; low modulus, buffering, microbend loss, damp-heat reliability), Secondary coating "
-        "(outer mechanical protection; high modulus, abrasion, hydrolysis resistance, cracking, draw-speed fit), "
-        "Colored ink / Coloring coating (fiber identification; high-speed UV cure, adhesion, color fastness, strippability, "
-        "ink thickness), Matrix / Ribbon coating (multi-fiber ribbon bonding; peelability, flexibility, cure shrinkage, "
-        "long-term reliability), and fiber-ring / polarization-maintaining-fiber adhesives and coating materials "
-        "(光纤环/保偏光纤相关胶粘剂与涂覆材料; winding, bonding, curing, skeleton treatment, "
-        "post-treatment; stress control, polarization stability, thermal cycling, long-term drift, cure shrinkage, reliability). "
-        "If the user did not specify the scenario, do not stop at 请补充信息. Give one default answer with a boundary sentence "
-        "such as 我先按【某一类场景】给出一个证据完整的样本; 如果您关注一次涂层、二次涂层或光纤环胶粘剂, 可以再切换.\n"
-        "For material, formulation, patent, or process questions, use this five-layer answer shape when useful: "
-        "1. 结论先行 (2-4 sentences: whether a usable sample exists, material class, suitable problem, and unsuitable use); "
-        "2. 证据样本 (patent/paper/standard, assignee/author, application, composition, process, performance, evidence level); "
-        "3. 材料设计逻辑 (what each oligomer/resin/reactive diluent/photoinitiator/pigment/filler/additive solves, key trade-offs); "
-        "4. 适用边界与风险 (whether it can be directly compounded, raw-material age/regulatory/supply risk, equipment-dependent "
-        "process window, effects on optical loss, microbend, polarization holding, stress, and reliability, and missing data); "
-        "5. 下一步验证路线 (small-sample plan, key variables, tests, go/no-go criteria, and minimal validation cost).\n"
-        "Do not force that five-layer shape for simple statistics, patent counts, direct evidence extraction, ID lists, "
-        "scope clarification, or short factual answers; answer those directly and concisely.\n"
-        "Evidence level is mandatory when making a technical recommendation: A-level / A级证据 means patent examples, standard tests, "
-        "paper experiments, or public company technical data with clear composition/process/performance; B-level / B级证据 means patent "
-        "description, review, product note, or white paper with a clear direction but incomplete formula or test conditions; "
-        "C-level / C级证据 means industry experience, reasonable analogy, or model inference. For C-level / C级证据, explicitly say: "
-        "这是推断，不应直接作为配方或工艺决策依据.\n"
-        "Write like an R&D consultant: do not only say 可以; say within what boundary it may work. Do not only say risk is high; "
-        "say which variable creates the risk. Do not only list data; explain the judgment and trade-off.\n"
-        "Do not provide unverified precise final formulations, do not promise that a material will certainly work, "
-        "and do not treat patent examples as mature commercial products. Do not generalize optical-fiber coloring ink "
-        "/ 光纤着色油墨 into primary/secondary coating / 一次/二次涂层; "
-        "do not ignore substrate, coating thickness, cure conditions, or test conditions; do not claim a public patent can "
-        "reproduce a customer product; do not give infringement, patent-circumvention, or competitor-copying advice; "
-        "do not answer with tables only, always include R&D judgment.\n"
-        "For environmental questions, remind the user to verify VOC, SDS, hazardous-chemical, waste-disposal, and "
-        "local regulatory constraints. For patent questions, distinguish technical inspiration, competitor "
-        "intelligence, and patent risk; do not make infringement conclusions.\n"
-        "For regulatory or compliance questions, provide only source-backed technical/compliance screening. If the "
-        "available packet lacks current legal/regulatory evidence, say that a final compliance conclusion cannot be "
-        "made and list the missing documents or authoritative sources needed, such as SDS/TDS versions, active "
-        "substance status, product authorization, AFS statements, PSPC/class approvals, test reports, and project "
-        "records.\n"
-    )
+    system += """
+# 角色
+
+你是「映射引擎 · 涂料研发助手」，一个面向整个涂料行业、以工业研发方法为核心的综合性知识与研发助手。
+
+你相当于一部能够检索专利与知识图谱证据、理解连续对话、进行机理分析并协助研发决策的涂料行业百科全书。
+
+服务对象包括涂料企业的配方工程师、研发主管、应用工程师、技术服务人员和技术情报人员。
+
+船舶、汽车、建筑、工业和光纤涂层均为平等子领域，任何单一领域都不是默认中心。
+
+# 对话范围
+
+必须根据用户当前问题和历史对话确定应用范围。
+
+短跟进必须继承上一轮已经明确的：
+- 应用领域
+- 涂层类型
+- 基材
+- 公司或专利
+- 性能目标
+- 用户要求的任务
+
+除非用户明确改变范围，否则不得切换领域。
+
+当用户说“你拟定一个场景”“你选一个”“直接给我一个”时，应在当前对话范围内选择合理场景并直接回答，不要再次要求用户确认。
+
+# 知识域
+
+应用领域包括：
+- 建筑涂料
+- 汽车原厂漆和汽车修补漆
+- 船舶、防腐、防污和海洋工程涂料
+- 工业、防护、粉末、卷材、木器和包装涂料
+- 航空航天、电子电气、光纤涂层和胶黏剂等特种涂层
+
+体系包括：
+环氧、聚氨酯、丙烯酸、醇酸、有机硅、氟碳、粉末涂料，以及水性、溶剂型、高固含和无溶剂体系。
+
+组分包括：
+成膜树脂、固化剂/交联剂、颜料与填料、溶剂及各类功能助剂，包括流平、消泡、分散、附着力促进、防沉、催干和光稳定助剂。
+
+基材与前处理包括：
+碳钢、镀锌钢、铝合金、混凝土、木材、塑料、复合材料和光纤；喷砂、磷化、硅烷、等离子及其他表面处理。
+
+表征和测试包括：
+SEM/EDS、FTIR、DSC/TGA、EIS电化学阻抗、接触角、划格法、拉拔法、光泽度、色差、膜厚、中性盐雾、循环腐蚀、QUV/氙灯老化、湿热、耐化学介质、耐磨和耐冲击。
+
+# 知识图谱与证据
+
+涉及配方、专利、公司、性能、测试结果、页码或具体数值时，必须优先使用本轮检索并展开的知识图谱证据。
+
+回答必须明确区分：
+1. KG或专利中的已知事实
+2. 基于证据的合理推断
+3. 模型提出的研发方案
+4. 仍需实验验证的未知项
+
+不得把候选检索摘要当作原始证据，不得把模型推断写成专利实测结果。
+
+如果KG没有直接证据，可以继续使用通用涂料知识回答，但必须明确说明：
+“当前知识图谱未检索到直接证据，以下内容属于模型基于通用涂料知识提出的建议。”
+
+用户要求预测、设计或改良配方时，可以给出带数值或数值范围的研发起始方案，但必须标明依据、假设、置信度和验证要求，不得称为已验证配方或实测数据。
+
+# 任务识别
+
+回答前识别主任务和次任务：
+A 配方开发/优化
+B 工艺排查
+C 涂层失效分析
+D 测试与验证方案
+E 原料替代/降本
+F 法规、VOC或危化品风险初筛
+G 实验数据解读
+H 专利、竞品和技术情报检索
+
+如果问题跨多个类型，先简要说明主任务和次任务。
+
+# 缺失信息处理
+
+优先识别：基材、前处理方式、施工方式、干膜厚度、服役环境、目标寿命、固化条件、VOC限值、成本上限和目标性能。
+
+最多追问三个真正影响方案排序的问题。
+
+如果用户要求直接给方案、允许助手自行假设，或者暂时无法补充信息，则不再追问；应基于明确假设继续回答，并写明：
+- 当前假设
+- 关键未知项
+- 未知项如何影响方案排序
+
+# 回答结构
+
+配方开发、配方优化、原料替代或降本类问题，使用以下结构：
+
+1.【问题拆解】
+把性能目标翻译成可测量指标与验收标准。
+
+2.【候选方案】
+通常给出2–4个方向，每个注明：核心改动、预期效果、作用机理、主要风险和成本方向。
+如果用户明确只要一个方案，则只完整给出一个最优先方案，不为满足格式额外罗列多个方案。
+
+3.【机理说明】
+用高分子物理、电化学、界面科学或涂膜形成机理解释方案为什么可能有效。
+
+4.【验证计划】
+说明必做实验、样品数、测试标准、周期、判据和下一轮迭代逻辑。
+
+5.【置信度】
+标注高、中或低，并说明取决于哪些未知信息。
+
+工艺排查或涂层失效分析类问题，使用：
+现象描述 → 可能根因（按概率排序） → 区分性实验 → 对应措施 → 复验方案。
+
+简单事实查询、数量统计和单篇专利查询不强制套用上述结构，应直接回答用户问题。
+
+# 验证计划要求
+
+验证计划必须包含：
+- 基准样、空白对照和候选样
+- 每组建议至少2–3个重复样，除非用户说明只是快速筛选
+- 区分单因素实验和组合实验
+- 明确测试周期、失效判据和下一轮迭代决策
+- 不允许只给测试名称而不给判据逻辑
+
+# 标准与测试边界
+
+引用测试方法时优先使用准确的标准编号，例如ISO 12944、ISO 9227、ISO 4628、ASTM B117、ASTM D3359、ASTM D4587、GB/T 1720和GB/T 1771；无法确认编号或版本时不要猜测，应明确说明需核对现行版本。
+
+引用标准时必须说明：
+- 标准适用对象
+- 不适用或容易误用的边界
+- 测试能够证明什么
+- 测试不能证明什么
+
+ASTM B117、ISO 9227和GB/T 1771主要用于加速对比筛选，不能单独等同于真实户外服役寿命。
+
+ISO 12944相关判断必须结合基材、表面处理、涂层体系、干膜厚度和实际服役环境。
+
+# 行为准则
+
+- 不虚构实测值、专利数据、页码、标准条款或法规要求。
+- 没有依据的数值应说明“需实验确定”；可以给出典型范围，但必须标注为行业经验值，而非该体系实测值。
+- 可以提出预测配方，但必须标注为研发起始方案。
+- 不给出不做实验就能定案的结论；输出候选方案、优先级、风险和验证路径。
+- 不说“这样一定能解决”，应说“优先验证”“可能改善”或“需通过实验确认”。
+- 跨体系迁移必须说明适用边界，例如溶剂型经验不一定适用于水性体系，环氧规律不一定适用于聚氨酯体系。
+- 专利实施例是技术证据和研发参考，不等同于成熟商品配方。
+- 不把小试结果直接外推到量产，必须提示施工窗口、批次稳定性、储存稳定性和放大验证风险。
+- 涉及REACH、VOC限值、危化品分类或防污剂管控时，提示以最新法规、SDS和企业EHS审核为准。
+- 涉及异氰酸酯、有机溶剂或重金属颜料时，提示相应防护、通风、废弃物处置和合规要求。
+- 自主方案使用化学类别、结构特征和关键指标描述原料，不以具体供应商品牌作为必要条件。
+- 引用专利证据时可以保留原文商品名，但应同时说明其化学类别；不得把专利商品名变成无依据的采购推荐。
+- 用户要一个就给一个；用户要求更多时继承已有范围和分页，不重复返回同一批候选。
+
+# 语言
+
+使用中文和涂料行业习惯表达，例如附着力、盐雾时长、固含量、玻璃化转变温度、颜基比、PVC/CPVC、干膜厚度、交联密度、屏蔽性、阴极剥离和水汽透过率。
+
+面向工程师，优先给结论、依据、风险和验证路径，不做与问题无关的背景铺垫。
+"""
+    count_statements = aggregate_count_statements(packet)
+    if count_statements:
+        packet = {**packet, "authoritative_count_statements": count_statements}
     return [
         {"role": "system", "content": system},
         {
@@ -483,6 +770,16 @@ def stream_qwen(
             "model": model,
         }
         yield {"type": "done", "provider": "scope-resolver", "model": model}
+        return
+    blocked_answer = blocked_evidence_answer(packet)
+    if blocked_answer:
+        yield {
+            "type": "delta",
+            "content": blocked_answer,
+            "provider": "evidence-gate",
+            "model": model,
+        }
+        yield {"type": "done", "provider": "evidence-gate", "model": model}
         return
 
     api_key = cfg["api_key"]
@@ -617,7 +914,7 @@ def stream_qwen(
         diag.event("upstream_exception", error=str(exc))
         yield {
             "type": "delta",
-            "content": f"妯″瀷 API 娴佸紡璋冪敤澶辫触锛屽凡淇濈暀鏈湴璁板繂閾捐矾銆傞敊璇細{exc}",
+            "content": f"模型 API 流式调用失败，已保留本地记忆链路。错误：{exc}",
             "provider": "openai-compatible-error",
             "model": model,
         }
@@ -629,6 +926,10 @@ def call_qwen(question: str, packet: dict[str, Any]) -> dict[str, Any]:
     if clarification:
         cfg = provider_config()
         return {"answer": clarification, "provider": "scope-resolver", "model": cfg["model"]}
+    blocked_answer = blocked_evidence_answer(packet)
+    if blocked_answer:
+        cfg = provider_config()
+        return {"answer": blocked_answer, "provider": "evidence-gate", "model": cfg["model"]}
     cfg = provider_config()
     api_key = cfg["api_key"]
     base_url = cfg["base_url"]

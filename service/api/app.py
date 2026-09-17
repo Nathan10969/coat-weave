@@ -132,7 +132,7 @@ def create_app(
                 except Exception as exc:  # noqa: BLE001 - SSE clients must receive a terminal event.
                     if diag:
                         diag.event("platform_stream_exception", error=str(exc))
-                    message = f"Streaming request failed: {exc}"
+                    message = "[流式响应异常，已中止。可重试或换个问法。]"
                     delta = (
                         {"role": "assistant", "content": message}
                         if not sent_first_content
@@ -262,12 +262,7 @@ def _live_openai_events(
     chat_request: ChatRequest,
     diag_request_id: str,
 ) -> Iterator[dict[str, Any]]:
-    try:
-        return engine.stream_openai_chat_completion(chat_request, diag_request_id=diag_request_id)
-    except TypeError as exc:
-        if "diag_request_id" not in str(exc):
-            raise
-        return engine.stream_openai_chat_completion(chat_request)
+    return engine.stream_openai_chat_completion(chat_request, diag_request_id=diag_request_id)
 
 
 def _buffered_openai_events(

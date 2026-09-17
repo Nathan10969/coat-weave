@@ -7,7 +7,7 @@ bbox 这里没法 backfill — 需要重跑 unit_extractor + V1.2.5 _extract_bbo
 老 ingest 在下次 re-ingest 前 bbox=None。
 
 跑 (Windows):
-    cd .\\coating_kg
+    cd <repository-root>\\extracting
     & "python" scripts\\backfill_evidence_pointer.py
 """
 from __future__ import annotations

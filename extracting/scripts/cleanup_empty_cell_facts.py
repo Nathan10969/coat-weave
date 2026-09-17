@@ -9,7 +9,7 @@ Property cell 出现 "PROP_X@left:" 这种空尾巴冒号，污染 CSV。
 会跳过并 logger.info 报。
 
 跑:
-    cd .\\coating_kg
+    cd <repository-root>\\extracting
     & "python" scripts\\cleanup_empty_cell_facts.py
 """
 from __future__ import annotations

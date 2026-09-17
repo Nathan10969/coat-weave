@@ -1161,7 +1161,7 @@ vllm serve ~/models/Qwen3.6-27B-AWQ-INT4 \
 ### 11.1 鏈琛?
 | 鏈 | 鍚箟 |
 |------|------|
-| spec | `./v1.2_design\` 涓嬬殑璁捐鏂囨。锛堥」鐩娉曪級|
+| spec | `docs\design\` 涓嬬殑璁捐鏂囨。锛堥」鐩娉曪級|
 | Layer 0 / 1 / 2 | 鑺傜偣灞?/ 寮卞彫鍥炲眰 / 绮剧‘璇佹嵁灞?|
 | FactHyperedge | Layer 2 澶氭Ы浣?JSON fact锛孨 鍏冨叧绯?|
 | PassageHyperedge | Layer 1 娈佃惤鍘熸枃 + tagged_entities |

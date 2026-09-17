@@ -669,3 +669,56 @@ P2:
   `src/coating_kg/db/insert.py` in the same change.
 - Add audit checks for dangling canonical endpoints, partial coverage, inherited
   profile fallbacks, and proposed canonical rates.
+
+## 13. Query-Facing Dimension Contract: application_family / applications / substrates
+
+> Added 2026-06-12 after the fiber-count incident (same question answered
+> 0/31/554). Root cause: these three dimensions were never defined in this
+> contract, so build-side LLMs free-texted 454 distinct application_family
+> labels over 554 patents and the serving side guessed at matching semantics.
+
+### 13.1 Definitions
+
+- **application_family** — the patent's end-use BUSINESS DOMAIN, from the
+  CLOSED 25-key taxonomy in `coating_api_service/config/
+  application_family_taxonomy.json` (marine, automotive, optical_fiber,
+  protective_anticorrosive, ...). Multi-valued. Query semantics: exact match
+  on family keys; OR within the list.
+- **applications** — free-text end-use phrases as stated in the document
+  (weak evidence, doc-profile tier). Not used for hard filtering.
+- **substrates** — the MATERIAL the coating is applied to (steel, optical
+  fiber, carbon fiber, concrete...). Query semantics: normalized fuzzy match.
+
+### 13.2 Axis adjudication rules (what goes where)
+
+1. **Function/performance words are NOT application families**: anti_icing,
+   self_cleaning, antimicrobial, thermal_insulation, vibration_damping →
+   property dimension. (33 such values were polluting application_family.)
+2. **Coating form/technology words are NOT application families**:
+   waterborne, powder_coating, clearcoat, high_temperature, multilayer →
+   coating-type facet. (19 values.)
+3. **Dual-nature concepts (光纤 case)**: when a material is both the substrate
+   and the de-facto market (optical fiber, coil steel), tag BOTH
+   substrates=<material> AND application_family=<family key>. Never only one.
+4. **Extraction output must be a taxonomy key**, not a free phrase. Sentence-
+   like labels ("Water-based multilayer automotive coating system; ...") are
+   extraction bugs; fix the prompt, do not extend the taxonomy.
+5. **Hypernyms resolve to the family**: automotive_oem/refinish/trim are all
+   `automotive`; sub-scenario detail belongs in `applications` free text.
+
+### 13.3 Data layout after the 2026-06-12 remap
+
+`patent_profiles.jsonl`: `application_family` holds canonical family keys
+(query axis); `application_family_raw` preserves the original free-text
+labels (drill-down + re-taxonomy). Remap script:
+`coating_api_service/scripts/remap_application_family.py` (idempotent,
+re-derives from raw). After any KG rebuild: re-run remap → restart
+coating-kg-tools → re-run `scripts/export_kg_vocab.py`.
+
+### 13.4 Pipeline obligation
+
+Stage emitting doc profiles must constrain `application_family` to taxonomy
+keys (closed enum in the extraction prompt mirroring
+`application_family_enum.json`), and route rule-13.1/13.2 words to their own
+dimensions. Until that lands, the serve-side remap script is the enforcement
+point.
