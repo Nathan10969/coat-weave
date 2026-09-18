@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "notes": "Broad intent -> canonical OR-set. marine_antifouling is compat alias of marine_fouling_control; emit concept_alias_migrated receipt.",
+  "concepts": {
+    "marine_fouling_control": ["antifouling", "foul_release", "fouling_control"],
+    "antifouling": ["antifouling"],
+    "foul_release": ["foul_release"],
+    "fouling_control": ["fouling_control"],
+    "marine_antifouling": ["antifouling", "foul_release", "fouling_control"]
+  },
+  "concept_aliases": {
+    "marine_antifouling": "marine_fouling_control"
+  }
+}

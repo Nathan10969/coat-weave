@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "notes": "System words migrate from materials/material_groups values into resin_systems via route_adjustments. Exact material tokens must not keep these after migrate.",
+  "resin_system_aliases": {
+    "polyurethane": "polyurethane",
+    "pu": "polyurethane",
+    "聚氨酯": "polyurethane",
+    "epoxy": "epoxy",
+    "环氧": "epoxy",
+    "acrylic": "acrylic",
+    "丙烯酸": "acrylic",
+    "polyester": "polyester",
+    "聚酯": "polyester",
+    "alkyd": "alkyd",
+    "醇酸": "alkyd",
+    "silicone": "silicone",
+    "有机硅": "silicone",
+    "fluoropolymer": "fluoropolymer",
+    "氟碳": "fluoropolymer"
+  }
+}

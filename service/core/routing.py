@@ -1830,26 +1830,35 @@ def application_family_schema_property() -> dict[str, Any]:
 
 
 def validate_aggregate_filter_vocab(filters: dict[str, Any]) -> list[str]:
-    """Post-route vocabulary guard. Values the backend's exact matcher can never
-    match are demoted to substrates (the only dimension with normalized fuzzy
-    matching), instead of silently producing a false-negative count.
-    No-op when the vocabulary file is absent. Returns warnings for the trace."""
+    """Post-route vocabulary guard.
+
+    Unresolved application_family values become unsupported constraints.
+    Cross-field demotion into substrates is forbidden.
+    No-op when the vocabulary file is absent. Returns warnings for the trace.
+    """
     known = load_kg_filter_vocab().get("application_family")
     if not known:
         return []
     kept: list[str] = []
-    moved: list[str] = []
+    rejected: list[str] = []
     for value in filters.get("application_family") or []:
         lowered = str(value).strip().lower()
         if lowered in APPLICATION_FAMILY_EXACT_MATCH_EXEMPT or lowered in known:
             kept.append(value)
         else:
-            moved.append(value)
-    if not moved:
-        return []
+            rejected.append(value)
     filters["application_family"] = kept
-    append_unique_values(filters.setdefault("substrates", []), moved)
-    return [f"application_family values not in vocabulary, retried as substrates: {moved}"]
+    if not rejected:
+        return []
+    unsupported = filters.setdefault("unsupported_constraints", [])
+    if not isinstance(unsupported, list):
+        unsupported = []
+        filters["unsupported_constraints"] = unsupported
+    for value in rejected:
+        token = f"application_family:{value}"
+        if token not in unsupported:
+            unsupported.append(token)
+    return [f"application_family values not in vocabulary, marked unsupported: {rejected}"]
 
 
 def aggregate_filters_for_question(question: str) -> dict[str, Any]:

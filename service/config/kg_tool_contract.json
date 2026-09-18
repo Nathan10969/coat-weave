@@ -3,12 +3,32 @@
   "tools": {
     "kg.hybrid_search": {
       "parameters": {
-        "query": {"type": "string", "required": true},
-        "top_k": {"type": "integer", "minimum": 1, "maximum": 50},
-        "candidate_k": {"type": "integer", "minimum": 1, "maximum": 100},
-        "offset": {"type": "integer", "minimum": 0},
-        "expand_top_k": {"type": "integer", "minimum": 0, "maximum": 30},
-        "filters": {"type": "filters"}
+        "query": {
+          "type": "string",
+          "required": true
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "candidate_k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expand_top_k": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "filters": {
+          "type": "filters"
+        }
       },
       "filter_fields": [
         "doc_ids",
@@ -17,26 +37,43 @@
         "example_kind",
         "qa_policy",
         "application_family",
+        "coating_families",
         "applications",
         "substrates",
         "test_methods",
         "test_standards",
         "material_roles",
         "materials",
+        "material_groups",
         "material_canonical_ids",
         "resin_systems",
         "assignees",
+        "publication_year",
         "property_families",
         "property_canonical_ids_soft"
       ]
     },
     "kg.sql_aggregate": {
       "parameters": {
-        "intent": {"type": "aggregate_intent", "required": true},
-        "target": {"type": "aggregate_target", "required": true},
-        "group_by": {"type": "aggregate_group_list"},
-        "filters": {"type": "filters"},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 500}
+        "intent": {
+          "type": "aggregate_intent",
+          "required": true
+        },
+        "target": {
+          "type": "aggregate_target",
+          "required": true
+        },
+        "group_by": {
+          "type": "aggregate_group_list"
+        },
+        "filters": {
+          "type": "filters"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
       },
       "filter_fields": [
         "doc_ids",
@@ -45,38 +82,82 @@
         "example_kind",
         "qa_policy",
         "application_family",
+        "coating_families",
         "applications",
         "substrates",
         "test_methods",
         "test_standards",
         "material_roles",
         "materials",
+        "material_groups",
         "material_canonical_ids",
         "resin_systems",
         "assignees",
+        "publication_year",
         "property_families",
         "property_canonical_ids_soft"
       ]
     },
     "kg.doc_field_scan": {
       "parameters": {
-        "doc_ids": {"type": "string_list", "required": true},
-        "query": {"type": "string", "required": true},
-        "field_groups": {"type": "doc_field_group_list"},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-        "include_evidence": {"type": "boolean"}
+        "doc_ids": {
+          "type": "string_list",
+          "required": true
+        },
+        "query": {
+          "type": "string",
+          "required": true
+        },
+        "field_groups": {
+          "type": "doc_field_group_list"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "include_evidence": {
+          "type": "boolean"
+        }
       },
-      "default_groups": ["test_method", "test_condition", "property", "result", "facts", "materials", "evidence"],
-      "allowed_groups": ["test_method", "test_condition", "property", "result", "facts", "materials", "evidence", "baseline", "process", "substrate"]
+      "default_groups": [
+        "test_method",
+        "test_condition",
+        "property",
+        "result",
+        "facts",
+        "materials",
+        "evidence"
+      ],
+      "allowed_groups": [
+        "test_method",
+        "test_condition",
+        "property",
+        "result",
+        "facts",
+        "materials",
+        "evidence",
+        "baseline",
+        "process",
+        "substrate"
+      ]
     },
     "kg.expand_hyperedge_multihop": {
       "parameters": {
-        "object_ids": {"type": "string_list", "required": true}
+        "object_ids": {
+          "type": "string_list",
+          "required": true
+        }
       }
     }
   },
   "aggregate": {
-    "intents": ["distinct_count", "list_distinct", "group_count", "numeric_distribution"],
+    "intents": [
+      "distinct_count",
+      "list_distinct",
+      "group_count",
+      "numeric_distribution"
+    ],
     "targets": [
       "test_method",
       "property",
@@ -104,27 +185,103 @@
       "example_kind",
       "polarity",
       "application_family",
+      "coating_families",
       "publication_year"
-    ]
+    ],
+    "document_level_group_by": [
+      "publication_year",
+      "assignee",
+      "application_family",
+      "coating_families"
+    ],
+    "max_group_by": 3
   },
   "filter_aliases": {
-    "application_family": ["application_family", "application_families"],
-    "applications": ["applications", "application"],
-    "substrates": ["substrates", "substrate"],
-    "test_methods": ["test_methods", "test_method"],
-    "test_standards": ["test_standards", "test_standard", "standards"],
-    "material_roles": ["material_roles", "material_role"],
-    "materials": ["materials", "material", "material_names"],
-    "material_canonical_ids": ["material_canonical_ids", "material_ids"],
-    "resin_systems": ["resin_systems", "resin_system"],
-    "assignees": ["assignees", "assignee", "applicants"],
-    "property_families": ["property_families", "property_family"],
-    "property_canonical_ids_soft": ["property_canonical_ids_soft", "soft_property_canonical_ids", "property_canonical_ids"],
-    "doc_ids": ["doc_ids", "doc_id"],
-    "properties": ["properties", "property"],
-    "polarity": ["polarity"],
-    "example_kind": ["example_kind", "example_kinds"],
-    "qa_policy": ["qa_policy"]
+    "application_family": [
+      "application_family",
+      "application_families"
+    ],
+    "applications": [
+      "applications",
+      "application"
+    ],
+    "substrates": [
+      "substrates",
+      "substrate"
+    ],
+    "test_methods": [
+      "test_methods",
+      "test_method"
+    ],
+    "test_standards": [
+      "test_standards",
+      "test_standard",
+      "standards"
+    ],
+    "material_roles": [
+      "material_roles",
+      "material_role"
+    ],
+    "materials": [
+      "materials",
+      "material",
+      "material_names"
+    ],
+    "material_canonical_ids": [
+      "material_canonical_ids",
+      "material_ids"
+    ],
+    "resin_systems": [
+      "resin_systems",
+      "resin_system"
+    ],
+    "assignees": [
+      "assignees",
+      "assignee",
+      "applicants"
+    ],
+    "property_families": [
+      "property_families",
+      "property_family"
+    ],
+    "property_canonical_ids_soft": [
+      "property_canonical_ids_soft",
+      "soft_property_canonical_ids",
+      "property_canonical_ids"
+    ],
+    "doc_ids": [
+      "doc_ids",
+      "doc_id"
+    ],
+    "properties": [
+      "properties",
+      "property"
+    ],
+    "polarity": [
+      "polarity"
+    ],
+    "example_kind": [
+      "example_kind",
+      "example_kinds"
+    ],
+    "qa_policy": [
+      "qa_policy"
+    ],
+    "coating_families": [
+      "coating_families",
+      "coating_family",
+      "coating_family_concept"
+    ],
+    "publication_year": [
+      "publication_year",
+      "publication_years",
+      "year",
+      "years"
+    ],
+    "material_groups": [
+      "material_groups",
+      "material_group"
+    ]
   },
   "field_types": {
     "doc_ids": "string_list",
@@ -143,7 +300,10 @@
     "resin_systems": "string_list",
     "assignees": "string_list",
     "property_families": "string_list",
-    "property_canonical_ids_soft": "string_list"
+    "property_canonical_ids_soft": "string_list",
+    "coating_families": "string_list",
+    "publication_year": "string_list",
+    "material_groups": "material_group_list"
   },
   "filter_descriptions": {
     "doc_ids": "Patent publication identifiers used as a hard document scope.",
@@ -152,17 +312,20 @@
     "example_kind": "Example class such as working, comparative, reference, control, or blank.",
     "qa_policy": "Quality-assurance inclusion policy.",
     "application_family": "Broad application domain such as marine, automotive, construction, industrial, or optical fiber.",
-    "applications": "Specific application names or use cases stated by the user.",
+    "applications": "Specific use-case names only (hull, buoy, deck, etc.). Do NOT put coating-class labels such as antifouling/foul_release here — use coating_families.",
     "substrates": "Substrate or base-material names.",
     "test_methods": "Test-method names.",
     "test_standards": "Formal test-standard identifiers.",
     "material_roles": "Controlled functional roles for materials, for example resin, curing_agent, pigment, filler, additive, solvent, or catalyst.",
-    "materials": "Specific material, chemical class, product, or resin chemistry names supplied by the user. Include useful Chinese and English aliases when known.",
+    "materials": "Legacy flat material names. Prefer material_groups for AND-of-OR logic. Each materials[] entry is treated as its own OR-group for compatibility.",
     "material_canonical_ids": "Canonical material IDs copied from KG vocabulary results; never invent an ID.",
     "resin_systems": "Broad document-level resin-system classification only, such as epoxy, polyurethane, acrylic, alkyd, or silicone/polysiloxane. Use materials for a more specific named chemistry.",
     "assignees": "Patent assignee or applicant organization names.",
     "property_families": "Broad property-family classifications.",
-    "property_canonical_ids_soft": "Soft property canonical-ID hints from KG vocabulary results."
+    "property_canonical_ids_soft": "Soft property canonical-ID hints from KG vocabulary results.",
+    "coating_families": "Coating-class labels backed by patent_profiles.coating_family. Use canonicals antifouling, foul_release, fouling_control, or concept marine_fouling_control. Do NOT put coating-class labels in applications.",
+    "publication_year": "Publication year extracted from patents.publication_date, e.g. ['2019'] or ['unknown_year']. Hard filter.",
+    "material_groups": "Structured material constraints. Each group is {values:[...], roles?:[...], match:'any'}. OR within a group, AND across groups. Prefer this over flat materials when multiple concepts must all match. Resin system words (polyurethane/epoxy/...) belong in resin_systems, not as exact material tokens."
   },
   "material_roles": {
     "values": [
@@ -222,6 +385,18 @@
       "components": "component"
     }
   },
-  "qa_policy": ["include_all", "core_only", "qa_only"],
-  "invalid_example_kind_values": ["formulation", "formula", "recipe", "coating system", "coating_system", "paint system", "paint_system"]
+  "qa_policy": [
+    "include_all",
+    "core_only",
+    "qa_only"
+  ],
+  "invalid_example_kind_values": [
+    "formulation",
+    "formula",
+    "recipe",
+    "coating system",
+    "coating_system",
+    "paint system",
+    "paint_system"
+  ]
 }

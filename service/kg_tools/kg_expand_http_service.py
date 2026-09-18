@@ -22,7 +22,13 @@ if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
 
 import expand_hyperedge_multihop as expand  # noqa: E402
-from kg_contract import load_tool_contract, normalize_filter_request  # noqa: E402
+from kg_contract import (  # noqa: E402
+    load_coating_family_aliases,
+    load_coating_family_multi_value,
+    load_tool_contract,
+    normalize_filter_request,
+    resolve_coating_family_token,
+)
 from demo_text import doc_id_lookup_key  # noqa: E402
 
 
@@ -71,11 +77,17 @@ DEFAULT_SEARCH_CANDIDATE_K = int(os.environ.get("KG_HYBRID_CANDIDATE_K", str(RET
 DEFAULT_RRF_K = int(os.environ.get("KG_HYBRID_RRF_K", str(FUSION_CONFIG.get("rrf_k") or 60)))
 MAX_SEARCH_TOP_K = int(os.environ.get("KG_HYBRID_MAX_TOP_K", "50"))
 MAX_SEARCH_CANDIDATE_K = int(os.environ.get("KG_HYBRID_MAX_CANDIDATE_K", "500"))
-MAX_AGGREGATE_EXAMPLES_PER_ITEM = int(os.environ.get("KG_AGGREGATE_MAX_EXAMPLES_PER_ITEM", "4"))
+# Keep enough room for document-level buckets (e.g. unknown_year exact5) after doc dedupe.
+MAX_AGGREGATE_EXAMPLES_PER_ITEM = int(os.environ.get("KG_AGGREGATE_MAX_EXAMPLES_PER_ITEM", "8"))
 KG_TOOL_CONTRACT = load_tool_contract()
 AGGREGATE_INTENTS = set(KG_TOOL_CONTRACT["aggregate"]["intents"])
 AGGREGATE_TARGETS = set(KG_TOOL_CONTRACT["aggregate"]["targets"])
 AGGREGATE_GROUP_BY = set(KG_TOOL_CONTRACT["aggregate"]["group_by"])
+DOCUMENT_LEVEL_GROUP_BY = set(
+    KG_TOOL_CONTRACT.get("aggregate", {}).get("document_level_group_by")
+    or ["publication_year", "assignee", "application_family", "coating_families"]
+)
+MAX_COMPOSITE_GROUP_BY = int(KG_TOOL_CONTRACT.get("aggregate", {}).get("max_group_by") or 3)
 _ROLE_CONFIG = KG_TOOL_CONTRACT["material_roles"]
 VALID_MATERIAL_ROLES = frozenset(_ROLE_CONFIG["values"])
 MATERIAL_ROLES = tuple(dict.fromkeys([*_ROLE_CONFIG["values"], *_ROLE_CONFIG["aliases"].keys()]))
@@ -684,6 +696,140 @@ MARINE_APPLICATION_ALIASES = {
 }
 
 
+
+def publication_year_for_patent(patent: dict[str, Any] | None) -> str:
+    patent = patent or {}
+    publication_date = str(patent.get("publication_date") or "").strip()
+    match = re.search(r"(?:19|20)\d{2}", publication_date)
+    return match.group(0) if match else "unknown_year"
+
+
+def coating_family_values_for_patent(patent: dict[str, Any] | None) -> list[str]:
+    """Normalize profile coating_family to canonical multi-values via closed tables."""
+    patent = patent or {}
+    raw = patent.get("coating_family")
+    values = raw if isinstance(raw, list) else [raw]
+    out: list[str] = []
+    aliases = load_coating_family_aliases()
+    multi = load_coating_family_multi_value()
+    for value in values:
+        if value is None or value == "":
+            continue
+        key = str(value).strip().casefold()
+        if not key:
+            continue
+        if key in multi:
+            for item in multi[key]:
+                if item not in out:
+                    out.append(item)
+            continue
+        if key in aliases:
+            item = aliases[key]
+            if item not in out:
+                out.append(item)
+            continue
+        resolved, _, bad = resolve_coating_family_token(key)
+        if resolved and not bad:
+            for item in resolved:
+                if item not in out:
+                    out.append(item)
+            continue
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def material_group_matches_rows(
+    group: dict[str, Any],
+    material_rows: list[tuple[Any, dict[str, Any]]],
+) -> bool:
+    values = [str(v).strip() for v in (group.get("values") or []) if str(v).strip()]
+    roles = {str(v).strip().casefold() for v in (group.get("roles") or []) if str(v).strip()}
+    match = str(group.get("match") or "any").casefold()
+    candidates = material_rows
+    if roles:
+        candidates = [
+            (role, row)
+            for role, row in material_rows
+            if str(role or "").strip().casefold() in roles
+            or str(row.get("material_role") or row.get("role") or "").strip().casefold() in roles
+        ]
+    if values:
+        if match == "all":
+            for value in values:
+                one = lower_set([value])
+                if not any(
+                    item and item_matches_filter(item, one)
+                    for item in (
+                        normalize_value_item(
+                            row.get("material") or row.get("name") or row.get("label"),
+                            row.get("canonical_id"),
+                        )
+                        for _, row in candidates
+                    )
+                ):
+                    return False
+        else:
+            wanted = lower_set(values)
+            if not any(
+                item and item_matches_filter(item, wanted)
+                for item in (
+                    normalize_value_item(
+                        row.get("material") or row.get("name") or row.get("label"),
+                        row.get("canonical_id"),
+                    )
+                    for _, row in candidates
+                )
+            ):
+                return False
+    elif roles and not candidates:
+        return False
+    elif not values and not roles:
+        return False
+    return True
+
+
+def material_groups_match(
+    groups: list[dict[str, Any]],
+    raw: dict[str, Any],
+    facts_map: dict[str, dict[str, Any]] | None,
+) -> bool:
+    if not groups:
+        return True
+    all_rows = aggregate_material_rows(raw, facts_map, None)
+    for group in groups:
+        if not isinstance(group, dict):
+            return False
+        if not material_group_matches_rows(group, all_rows):
+            return False
+    return True
+
+
+def doc_hard_scope_matches(
+    raw: dict[str, Any],
+    filters: dict[str, Any],
+    patents: dict[str, dict[str, Any]] | None,
+) -> bool:
+    patents = patents or {}
+    patent = patent_for_doc(patents, raw_hyperedge_doc_id(raw))
+    if filters.get("application_family"):
+        wanted = lower_set(filters["application_family"])
+        families = aggregate_target_values(raw, "application_family", patents, filters)
+        if not application_family_matches(wanted, families):
+            return False
+    if filters.get("coating_families"):
+        wanted = lower_set(filters["coating_families"])
+        actual = set(coating_family_values_for_patent(patent))
+        if not wanted.intersection(actual):
+            return False
+    if filters.get("publication_year"):
+        wanted = lower_set(filters["publication_year"])
+        year = publication_year_for_patent(patent).casefold()
+        if year not in wanted:
+            return False
+    return True
+
+
 def application_family_matches(wanted: set[str], actual_items: list[dict[str, Any]]) -> bool:
     actual = {
         str(item.get("value") or item.get("canonical_id") or "").strip().lower()
@@ -728,9 +874,23 @@ def item_matches_filter(item: dict[str, Any], wanted: set[str]) -> bool:
         return True
     if not wanted:
         return True
-    for value in actual:
-        if any(needle == value or needle in value or value in needle for needle in wanted_norm):
+
+    def _needle_in_actual(haystack: str, needle: str) -> bool:
+        """Match wanted needle inside actual only (never actual-inside-wanted).
+        Short needles (<=3) require token boundaries to avoid GMA⊂material and MAT_G⊂MAT_gma.
+        """
+        if not needle or not haystack:
+            return False
+        if needle == haystack:
             return True
+        if len(needle) <= 3:
+            return bool(re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", haystack))
+        return needle in haystack
+
+    for value in actual:
+        for needle in wanted_norm:
+            if _needle_in_actual(value, needle):
+                return True
     return False
 
 
@@ -1088,6 +1248,69 @@ def resolve_assignee_doc_ids(store: Any, assignees: Any) -> list[str]:
     return sorted(resolved)
 
 
+
+def resolve_application_family_doc_ids(store: Any, families: Any) -> list[str]:
+    """Pre-resolve application_family hard scope to doc_ids for SQL candidate retrieval."""
+    wanted = lower_set(normalize_filter_values(families))
+    if not wanted:
+        return []
+    patents = get_patent_map(store)
+    resolved: set[str] = set()
+    for map_key, patent in patents.items():
+        values = patent.get("application_family")
+        values = values if isinstance(values, list) else [values]
+        items = [
+            item
+            for item in (
+                normalize_value_item(value, slug_id("APPLICATION", value))
+                for value in values
+            )
+            if item
+        ]
+        if not application_family_matches(wanted, items):
+            continue
+        doc_id = str(
+            patent.get("doc_id")
+            or patent.get("patent_id")
+            or patent.get("publication_number")
+            or patent.get("wo_id")
+            or map_key
+        ).strip()
+        if doc_id:
+            resolved.add(doc_id)
+    return sorted(resolved)
+
+
+def _intersect_doc_id_scope(
+    filters: dict[str, Any],
+    resolved: list[str],
+    *,
+    empty_warning: str,
+    intersect_warning: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not resolved:
+        filters["doc_ids"] = ["__NO_SCOPE_MATCH__"]
+        warnings.append(empty_warning)
+        return filters
+    explicit = filters.get("doc_ids") or []
+    if explicit:
+        resolved_keys = {
+            doc_id_lookup_key(value) or normalize_match_text(value) for value in resolved
+        }
+        filters["doc_ids"] = [
+            doc_id
+            for doc_id in explicit
+            if (doc_id_lookup_key(doc_id) or normalize_match_text(doc_id)) in resolved_keys
+        ]
+        if not filters["doc_ids"]:
+            filters["doc_ids"] = ["__NO_SCOPE_DOC_INTERSECTION__"]
+            warnings.append(intersect_warning)
+    else:
+        filters["doc_ids"] = resolved
+    return filters
+
+
 def available_store_doc_ids(store: Any) -> list[str]:
     return sorted(
         {
@@ -1114,28 +1337,29 @@ def apply_hard_search_scopes(store: Any, raw_filters: Any) -> tuple[dict[str, An
     requested_doc_ids = filters.get("doc_ids") or []
     if requested_doc_ids:
         filters["doc_ids"] = resolve_requested_doc_ids(store, requested_doc_ids) or ["__NO_DOC_ID_MATCH__"]
+    families = filters.get("application_family") or []
+    if families:
+        resolved = resolve_application_family_doc_ids(store, families)
+        filters = _intersect_doc_id_scope(
+            filters,
+            resolved,
+            empty_warning="application_family_hard_scope_resolved_empty",
+            intersect_warning="application_family_and_doc_id_hard_scopes_do_not_intersect",
+            warnings=warnings,
+        )
+        if filters.get("doc_ids") in (["__NO_SCOPE_MATCH__"], ["__NO_SCOPE_DOC_INTERSECTION__"]):
+            return filters, warnings
     assignees = filters.get("assignees") or []
-    if not assignees:
-        return filters, warnings
-    resolved = resolve_assignee_doc_ids(store, assignees)
-    if not resolved:
-        filters["doc_ids"] = ["__NO_ASSIGNEE_MATCH__"]
-        warnings.append("assignee_hard_scope_resolved_empty")
-        return filters, warnings
-    explicit = filters.get("doc_ids") or []
-    if explicit:
-        resolved_keys = {doc_id_lookup_key(value) or normalize_match_text(value) for value in resolved}
-        filters["doc_ids"] = [
-            doc_id for doc_id in explicit
-            if (doc_id_lookup_key(doc_id) or normalize_match_text(doc_id)) in resolved_keys
-        ]
-        if not filters["doc_ids"]:
-            filters["doc_ids"] = ["__NO_ASSIGNEE_DOC_INTERSECTION__"]
-            warnings.append("assignee_and_doc_id_hard_scopes_do_not_intersect")
-    else:
-        filters["doc_ids"] = resolved
+    if assignees:
+        resolved = resolve_assignee_doc_ids(store, assignees)
+        filters = _intersect_doc_id_scope(
+            filters,
+            resolved,
+            empty_warning="assignee_hard_scope_resolved_empty",
+            intersect_warning="assignee_and_doc_id_hard_scopes_do_not_intersect",
+            warnings=warnings,
+        )
     return filters, warnings
-
 
 def as_label(value: Any) -> str | None:
     if isinstance(value, dict):
@@ -1409,11 +1633,18 @@ def aggregate_target_values(
         item = normalize_value_item(doc_id, slug_id("DOC", doc_id))
         return [item] if item else []
     if target == "publication_year":
-        publication_date = str(patent.get("publication_date") or "").strip()
-        match = re.search(r"(?:19|20)\d{2}", publication_date)
-        year = match.group(0) if match else "unknown_year"
+        year = publication_year_for_patent(patent)
         item = normalize_value_item(year, slug_id("PUBLICATION_YEAR", year))
         return [item] if item else []
+    if target in {"coating_families", "coating_family"}:
+        return [
+            item
+            for item in (
+                normalize_value_item(value, slug_id("COATING_FAMILY", value))
+                for value in coating_family_values_for_patent(patent)
+            )
+            if item
+        ]
     if target == "application_family":
         values = patent.get("application_family")
         values = values if isinstance(values, list) else [values]
@@ -1532,6 +1763,20 @@ def raw_matches_aggregate_filters(
         families = aggregate_target_values(raw, "application_family", patents, filters)
         if not application_family_matches(wanted, families):
             return False
+    if filters.get("coating_families"):
+        wanted = lower_set(filters["coating_families"])
+        patent = patent_for_doc(patents, raw_hyperedge_doc_id(raw))
+        actual = set(coating_family_values_for_patent(patent))
+        if not wanted.intersection(actual):
+            return False
+    if filters.get("publication_year"):
+        wanted = lower_set(filters["publication_year"])
+        patent = patent_for_doc(patents, raw_hyperedge_doc_id(raw))
+        if publication_year_for_patent(patent).casefold() not in wanted:
+            return False
+    if filters.get("material_groups"):
+        if not material_groups_match(filters.get("material_groups") or [], raw, facts_map):
+            return False
     if filters.get("applications"):
         wanted = lower_set(filters["applications"])
         applications = aggregate_filter_values(raw, "applications", facts_map, evidence_map)
@@ -1634,10 +1879,20 @@ def add_bucket_example(
     value_item: dict[str, Any],
     patents: dict[str, dict[str, Any]],
 ) -> None:
+    """Append one example, preferring distinct doc_ids so group_count lists are usable."""
     examples = bucket.setdefault("examples", [])
     if len(examples) >= MAX_AGGREGATE_EXAMPLES_PER_ITEM:
         return
     example = first_evidence_example(raw, evidence_map)
+    doc_id = str(example.get("doc_id") or "").strip()
+    if doc_id:
+        seen_docs = {
+            str(item.get("doc_id") or "").strip()
+            for item in examples
+            if isinstance(item, dict) and str(item.get("doc_id") or "").strip()
+        }
+        if doc_id in seen_docs:
+            return
     assignees = raw_assignees(raw, patents)
     if assignees:
         example["assignee"] = assignees[0]
@@ -2094,9 +2349,12 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
         payload["effective_filters"] = receipt["effective_filters"]
         payload["unsupported_constraints"] = receipt["unsupported_constraints"]
         payload["route_adjustments"] = receipt["route_adjustments"]
-        payload["cohort_mode"] = "document" if resolved_target in {"doc_id", "publication_year", "resin_system"} else "hyperedge"
+        payload["requested_group_by"] = requested_group_by
+        payload["effective_group_by"] = effective_group_by if composite_mode else ([] if not group_by else [resolved_target] if resolved_target in AGGREGATE_GROUP_BY else [])
+        doc_like = resolved_target in {"doc_id", "publication_year", "resin_system", "assignee", "application_family", "coating_families", "__composite__"} or composite_mode
+        payload["cohort_mode"] = "document" if doc_like else "hyperedge"
         payload["count_unit"] = (
-            "patent" if resolved_target in {"doc_id", "publication_year", "resin_system"}
+            "patent" if doc_like
             else "formulation" if resolved_target == "formulation"
             else "hyperedge"
         )
@@ -2125,7 +2383,31 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             "items": [],
             "warnings": [],
         })
-    aggregate_target = group_by[0] if intent == "group_count" and group_by and group_by[0] in AGGREGATE_GROUP_BY else target
+    requested_group_by = list(group_by)
+    effective_group_by: list[str] = []
+    composite_mode = False
+    if intent == "group_count" and group_by:
+        invalid = [value for value in group_by if value not in AGGREGATE_GROUP_BY]
+        non_doc = [value for value in group_by if value in AGGREGATE_GROUP_BY and value not in DOCUMENT_LEVEL_GROUP_BY]
+        if len(group_by) > MAX_COMPOSITE_GROUP_BY:
+            receipt["unsupported_constraints"] = sorted(
+                set([*receipt["unsupported_constraints"], "group_by:max_dims_exceeded"])
+            )
+            receipt["route_adjustments"].append("group_by_truncated_to_max_unsupported")
+        elif invalid or non_doc:
+            receipt["unsupported_constraints"] = sorted(
+                set([*receipt["unsupported_constraints"], *[f"group_by:{v}" for v in (invalid + non_doc)]])
+            )
+            if non_doc:
+                receipt["route_adjustments"].append("group_by_non_document_dimension_unsupported_in_composite")
+        else:
+            effective_group_by = list(group_by)
+            composite_mode = len(effective_group_by) >= 1
+    aggregate_target = (
+        effective_group_by[0]
+        if composite_mode and len(effective_group_by) == 1
+        else ("__composite__" if composite_mode and len(effective_group_by) > 1 else target)
+    )
     if receipt["unsupported_constraints"]:
         return finish(
             {
@@ -2297,6 +2579,96 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             "generated_at": now_iso(),
         }, aggregate_target=aggregate_target)
 
+    if composite_mode and intent == "group_count":
+        # Document-level composite buckets. Primary count unit = patent.
+        dim_names = list(effective_group_by)
+        buckets_c: dict[tuple[str, ...], dict[str, Any]] = {}
+        distinct_docs: set[str] = set()
+        membership = 0
+        for raw in matched:
+            doc_id = raw_hyperedge_doc_id(raw)
+            patent = patent_for_doc(patents, doc_id)
+            # Build per-dimension value lists (multi-value dims expand membership).
+            dim_value_lists: list[list[str]] = []
+            for dim in dim_names:
+                if dim == "publication_year":
+                    dim_value_lists.append([publication_year_for_patent(patent)])
+                elif dim == "assignee":
+                    items = aggregate_target_values(raw, "assignee", patents, filters, facts_map)
+                    vals = [str(item.get("value") or "").strip() or "unknown_assignee" for item in items]
+                    dim_value_lists.append(vals or ["unknown_assignee"])
+                elif dim == "application_family":
+                    items = aggregate_target_values(raw, "application_family", patents, filters, facts_map)
+                    vals = [str(item.get("value") or "").strip() or "unknown_application_family" for item in items]
+                    dim_value_lists.append(vals or ["unknown_application_family"])
+                elif dim == "coating_families":
+                    vals = coating_family_values_for_patent(patent) or ["unknown_coating_family"]
+                    dim_value_lists.append(vals)
+                else:
+                    dim_value_lists.append(["unsupported"])
+            # cartesian membership across multi-value dims
+            from itertools import product
+            for combo in product(*dim_value_lists):
+                key = tuple(combo)
+                bucket = buckets_c.setdefault(
+                    key,
+                    {
+                        "value": " | ".join(combo),
+                        "group_values": {dim: combo[idx] for idx, dim in enumerate(dim_names)},
+                        "count": 0,
+                        "doc_ids": set(),
+                        "assignees": set(),
+                        "examples": [],
+                    },
+                )
+                doc_key = doc_id_lookup_key(doc_id) or normalize_match_text(doc_id) or doc_id
+                if doc_key and doc_key not in bucket["doc_ids"]:
+                    bucket["doc_ids"].add(doc_key)
+                    bucket["count"] = len(bucket["doc_ids"])
+                    membership += 1
+                if doc_key:
+                    distinct_docs.add(doc_key)
+                add_bucket_assignees(bucket, raw, patents)
+                if include_examples:
+                    add_bucket_example(bucket, raw, evidence_map, {"value": bucket["value"]}, patents)
+        items = []
+        for bucket in buckets_c.values():
+            doc_ids = bucket.pop("doc_ids")
+            assignees = bucket.pop("assignees")
+            bucket["doc_count"] = len(doc_ids)
+            bucket["count"] = bucket["doc_count"]
+            bucket["assignee_count"] = len(assignees)
+            bucket["assignees"] = sorted(assignees)[:20]
+            if not include_examples:
+                bucket["examples"] = []
+            items.append(bucket)
+        items = sorted(items, key=lambda row: (-int(row.get("count") or 0), str(row.get("value") or "")))[:limit]
+        payload = {
+            "tool": "kg.sql_aggregate",
+            "status": "ok" if items else "empty",
+            "query_interpretation": {
+                "intent": intent,
+                "target": target,
+                "group_by": dim_names,
+                "filters": filters,
+            },
+            "summary": {
+                "matched_hyperedges": len(matched),
+                "total_distinct_docs": len(distinct_docs),
+                "bucket_membership_count": membership,
+                "group_count": len(buckets_c),
+                "returned": len(items),
+                "applied_filters": applied_filters,
+                "ignored_filters": ignored_filters,
+            },
+            "total_distinct_docs": len(distinct_docs),
+            "bucket_membership_count": membership,
+            "items": items,
+            "warnings": warnings,
+            "generated_at": now_iso(),
+        }
+        return finish(payload, aggregate_target="__composite__")
+
     buckets: dict[tuple[str, str | None], dict[str, Any]] = {}
     missing_formulation_identity = 0
     for raw in matched:
@@ -2326,8 +2698,8 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
                 },
             )
             doc_id = raw_hyperedge_doc_id(raw)
-            if aggregate_target in {"doc_id", "publication_year"}:
-                count_identity = ("doc", doc_id_lookup_key(doc_id) or normalize_match_text(doc_id))
+            if aggregate_target in {"doc_id", "publication_year", "assignee", "application_family", "coating_families", "coating_family"}:
+                count_identity = ("doc", doc_id_lookup_key(doc_id) or normalize_match_text(doc_id), str(value).casefold())
             elif aggregate_target == "formulation":
                 count_identity = identity
             else:
@@ -2361,7 +2733,13 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
         warnings.append(f"excluded_formulations_missing_sample_and_context:{missing_formulation_identity}")
     if missing_target_identity and target == "formulation" and not missing_formulation_identity:
         warnings.append(f"excluded_formulations_missing_sample_and_context:{missing_target_identity}")
-    return finish({
+    all_docs = {
+        doc_id_lookup_key(raw_hyperedge_doc_id(raw)) or normalize_match_text(raw_hyperedge_doc_id(raw)) or raw_hyperedge_doc_id(raw)
+        for raw in matched
+        if raw_hyperedge_doc_id(raw)
+    }
+    bucket_membership_count = sum(int(item.get("doc_count") or 0) for item in items)
+    payload = {
         "tool": "kg.sql_aggregate",
         "status": "ok" if items else "empty",
         "query_interpretation": {"intent": intent, "target": target, "group_by": group_by, "filters": filters},
@@ -2369,15 +2747,20 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             "matched_hyperedges": len(matched),
             "total_count": total_count,
             "distinct_count": total_count,
+            "total_distinct_docs": len(all_docs),
+            "bucket_membership_count": bucket_membership_count,
             "group_count": group_count,
             "returned": len(items),
             "applied_filters": applied_filters,
             "ignored_filters": ignored_filters,
         },
+        "total_distinct_docs": len(all_docs),
+        "bucket_membership_count": bucket_membership_count,
         "items": items,
         "warnings": warnings,
         "generated_at": now_iso(),
-    }, aggregate_target=aggregate_target)
+    }
+    return finish(payload, aggregate_target=aggregate_target)
 
 
 def vector_literal(values: list[float]) -> str:
@@ -2743,6 +3126,11 @@ def raw_matches_search_hard_filters(
         systems = resin_system_candidates(raw, patent)
         if not any(item_matches_filter({"value": item.get("value")}, wanted_resin_systems) for item in systems):
             return False
+    if filters.get("material_groups"):
+        if not material_groups_match(filters.get("material_groups") or [], raw, facts_map):
+            return False
+    if not doc_hard_scope_matches(raw, filters, patents or {}):
+        return False
     return True
 
 
@@ -2751,7 +3139,20 @@ def filter_search_items_by_hard_material_roles(
     store: Any,
     filters: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    if not any(filters.get(key) for key in ("material_roles", "materials", "material_canonical_ids", "resin_systems")):
+    if not any(
+        filters.get(key)
+        for key in (
+            "material_roles",
+            "materials",
+            "material_groups",
+            "material_canonical_ids",
+            "resin_systems",
+            "application_family",
+            "coating_families",
+            "publication_year",
+            "doc_ids",
+        )
+    ):
         return items
     facts_map = get_facts_map(store)
     patents = get_patent_map(store)
@@ -4253,9 +4654,17 @@ def soft_filter_score(item: dict[str, Any], filters: dict[str, Any]) -> float:
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     score = 0.0
     for key in SEARCH_SOFT_FILTER_ALIASES:
-        if key in {"property_families", "property_canonical_ids_soft"}:
+        if key in {"property_families", "property_canonical_ids_soft", "material_groups"}:
+            # material_groups are structured dicts; hard-filtered elsewhere. Skip soft string boost.
             continue
-        values = [value.lower() for value in filters.get(key, []) if str(value).strip()]
+        raw_values = filters.get(key, []) or []
+        values: list[str] = []
+        for value in raw_values:
+            if isinstance(value, dict):
+                continue
+            text = str(value).strip()
+            if text:
+                values.append(text.lower())
         if not values:
             continue
         if any(value in haystack for value in values):
@@ -4376,6 +4785,167 @@ def paginate_search_items(
     }
 
 
+
+def _constraint_labels(filters: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for key in (
+        "application_family",
+        "coating_families",
+        "resin_systems",
+        "materials",
+        "material_groups",
+        "material_roles",
+        "material_canonical_ids",
+        "publication_year",
+        "assignees",
+        "applications",
+    ):
+        value = filters.get(key)
+        if not value:
+            continue
+        if key == "material_groups":
+            for group in value:
+                if not isinstance(group, dict):
+                    continue
+                vals = group.get("values") or []
+                roles = group.get("roles") or []
+                label = "+".join([*vals, *[f"role:{r}" for r in roles]]) or "material_group"
+                labels.append(label)
+        elif isinstance(value, list):
+            labels.extend(str(item) for item in value)
+        else:
+            labels.append(str(value))
+    return labels
+
+
+def build_adjacent_search_items(
+    exact_filters: dict[str, Any],
+    store: Any,
+    *,
+    query: str,
+    candidate_k: int,
+    top_k: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    """Exact-empty adjacent pass: relax one hard axis at a time; never merge into exact items.
+
+    Vector recall alone can miss hard-scope docs that are outside dense/sparse top-k.
+    After relaxing one axis, also walk the local store under the remaining hard filters
+    and union those candidates into adjacent_items (still never into exact items).
+    """
+    relax_axes = [
+        "material_groups",
+        "materials",
+        "material_canonical_ids",
+        "resin_systems",
+        "coating_families",
+        "publication_year",
+        "application_family",
+    ]
+    active = [axis for axis in relax_axes if exact_filters.get(axis)]
+    if not active:
+        return [], {}, []
+    adjustments: list[str] = []
+    adjacent_items: list[dict[str, Any]] = []
+    relaxed_filters: dict[str, Any] = {}
+    facts_map = get_facts_map(store)
+    patents = get_patent_map(store)
+
+    def _store_candidates(trial_filters: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        seen_docs: set[str] = set()
+        for raw in iter_store_hyperedges(store):
+            if not raw_matches_search_hard_filters(raw, trial_filters, facts_map, patents):
+                continue
+            doc_id = raw_hyperedge_doc_id(raw)
+            lookup = doc_id_lookup_key(doc_id) or normalize_match_text(doc_id) or doc_id
+            if not lookup or lookup in seen_docs:
+                continue
+            seen_docs.add(lookup)
+            object_id = raw_hyperedge_object_id(raw)
+            out.append(
+                {
+                    "object_type": "hyperedge",
+                    "object_id": object_id,
+                    "doc_id": doc_id,
+                    "text_for_embedding": "",
+                    "metadata": {
+                        "raw_hyperedge_id": raw_hyperedge_id(raw),
+                        "hyperedge_id": raw_hyperedge_id(raw),
+                    },
+                    "score": 0.0,
+                    "channels": ["adjacent_store"],
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
+    for axis in active:
+        trial = dict(exact_filters)
+        relaxed_value = trial.pop(axis)
+        trial[axis] = [] if axis != "material_groups" else []
+        adjustments.append(f"adjacent_relaxed:{axis}")
+        # Keep SQL/doc-id hard scopes coherent after relaxing.
+        scoped_trial, scope_warnings = apply_hard_search_scopes(store, trial)
+        for warning in scope_warnings:
+            adjustments.append(f"adjacent_scope:{warning}")
+        fused: list[dict[str, Any]] = []
+        try:
+            dense_vec, sparse_weights = embed_query(query)
+            pg_env = expand.load_pg_env(expand.DEFAULT_PG_ENV)
+            with expand.pg_connect(pg_env) as conn:
+                dense_rows = search_dense(conn, dense_vec, scoped_trial, candidate_k)
+                sparse_rows = search_sparse(conn, sparse_weights, scoped_trial, candidate_k)
+                property_rows = search_soft_property_candidates(conn, scoped_trial, candidate_k)
+            fused = fuse_search_results(dense_rows, sparse_rows, top_k=candidate_k)
+            fused = merge_property_recall_candidates(fused, property_rows)
+            fused = rerank_search_results_by_soft_filters(fused, scoped_trial, top_k=candidate_k)
+            fused = filter_search_items_by_hard_material_roles(fused, store, scoped_trial)
+        except Exception:
+            traceback.print_exc()
+            fused = []
+        store_rows = _store_candidates(scoped_trial, limit=max(top_k * 20, 200))
+        # Prefer vector hits first, then fill with store-hard-scope docs not already present.
+        seen = {
+            doc_id_lookup_key(str(item.get("doc_id") or "")) or normalize_match_text(str(item.get("doc_id") or ""))
+            for item in fused
+        }
+        for row in store_rows:
+            lookup = doc_id_lookup_key(str(row.get("doc_id") or "")) or normalize_match_text(str(row.get("doc_id") or ""))
+            if lookup and lookup not in seen:
+                fused.append(row)
+                seen.add(lookup)
+        if not fused:
+            continue
+        # Diversify by doc so adjacent envelope is patent-level, not one doc flooding top_k.
+        diversified: list[dict[str, Any]] = []
+        seen_docs: set[str] = set()
+        for item in fused:
+            lookup = doc_id_lookup_key(str(item.get("doc_id") or "")) or normalize_match_text(str(item.get("doc_id") or ""))
+            if not lookup or lookup in seen_docs:
+                continue
+            seen_docs.add(lookup)
+            diversified.append(item)
+        relaxed_filters = {axis: relaxed_value}
+        exact_labels = set(_constraint_labels(exact_filters))
+        kept_labels = set(_constraint_labels(trial))
+        unmet = sorted(exact_labels - kept_labels) or [axis]
+        satisfied = sorted(kept_labels)
+        adjacent_limit = max(top_k * 4, 20)
+        for rank, item in enumerate(diversified[:adjacent_limit], start=1):
+            compact = compact_search_item(item, rank)
+            adjacent_items.append(
+                {
+                    "item": compact,
+                    "satisfied_constraints": satisfied,
+                    "unmet_constraints": unmet,
+                }
+            )
+        break
+    return adjacent_items, relaxed_filters, adjustments
+
+
+
 def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
     query = str(request.get("query") or "").strip()
     raw_filters = request.get("requested_filters") if isinstance(request.get("requested_filters"), dict) else request.get("filters")
@@ -4394,9 +4964,14 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         payload["route_adjustments"] = receipt["route_adjustments"]
         payload["cohort_mode"] = "hyperedge"
         payload["count_unit"] = "hyperedge"
+        payload.setdefault("exact_items", payload.get("items") or [])
+        payload.setdefault("exact_filters", receipt["effective_filters"])
+        payload.setdefault("adjacent_items", [])
+        payload.setdefault("adjacent_relaxed_filters", {})
         if receipt["unsupported_constraints"]:
             payload["status"] = "unsupported"
             payload["items"] = []
+            payload["exact_items"] = []
         return payload
 
     if not query:
@@ -4451,6 +5026,8 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         warning in {
             "assignee_hard_scope_resolved_empty",
             "assignee_and_doc_id_hard_scopes_do_not_intersect",
+            "application_family_hard_scope_resolved_empty",
+            "application_family_and_doc_id_hard_scopes_do_not_intersect",
         }
         for warning in warnings
     ):
@@ -4502,6 +5079,20 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
     fused = filter_search_items_by_hard_material_roles(fused, store, filters)
     page_rows, pagination = paginate_search_items(fused, offset=offset, top_k=top_k)
     items = [compact_search_item(item, rank) for rank, item in enumerate(page_rows, start=offset + 1)]
+    adjacent_items: list[dict[str, Any]] = []
+    adjacent_relaxed_filters: dict[str, Any] = {}
+    if not items:
+        try:
+            adjacent_items, adjacent_relaxed_filters, adj = build_adjacent_search_items(
+                filters,
+                store,
+                query=query,
+                candidate_k=candidate_k,
+                top_k=top_k,
+            )
+            receipt["route_adjustments"] = list(dict.fromkeys([*receipt["route_adjustments"], *adj]))
+        except Exception as exc:  # adjacent must never break exact channel
+            warnings.append(f"adjacent_pass_failed:{type(exc).__name__}")
     return finish({
         "tool": "kg.hybrid_search",
         "status": "ok" if items else "empty",
@@ -4519,8 +5110,13 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
             "material_fact_found": len(material_rows),
             "pool_size": len(fused),
             "returned": len(items),
+            "adjacent_returned": len(adjacent_items),
         },
         "items": items,
+        "exact_items": items,
+        "exact_filters": filters,
+        "adjacent_items": adjacent_items,
+        "adjacent_relaxed_filters": adjacent_relaxed_filters,
         "warnings": warnings,
         "generated_at": now_iso(),
     })

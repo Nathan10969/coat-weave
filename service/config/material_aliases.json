@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "notes": "Closed material synonym expand for hard filters. Exact keys only; no substring/regex invention.",
+  "aliases": {
+    "gma": [
+      "GMA",
+      "glycidyl methacrylate",
+      "Glycidyl methacrylate",
+      "Glycidyl Methacrylate",
+      "Glycidyl methacrylate (GMA)",
+      "MAT_gma",
+      "MAT_glycidyl_methacrylate",
+      "甲基丙烯酸缩水甘油酯"
+    ],
+    "glycidyl methacrylate": [
+      "GMA",
+      "glycidyl methacrylate",
+      "Glycidyl methacrylate",
+      "Glycidyl Methacrylate",
+      "Glycidyl methacrylate (GMA)",
+      "MAT_gma",
+      "MAT_glycidyl_methacrylate",
+      "甲基丙烯酸缩水甘油酯"
+    ],
+    "glycidyl methacrylate (gma)": [
+      "GMA",
+      "glycidyl methacrylate",
+      "Glycidyl methacrylate",
+      "Glycidyl Methacrylate",
+      "Glycidyl methacrylate (GMA)",
+      "MAT_gma",
+      "MAT_glycidyl_methacrylate",
+      "甲基丙烯酸缩水甘油酯"
+    ],
+    "mat_gma": [
+      "GMA",
+      "glycidyl methacrylate",
+      "Glycidyl methacrylate",
+      "Glycidyl Methacrylate",
+      "Glycidyl methacrylate (GMA)",
+      "MAT_gma",
+      "MAT_glycidyl_methacrylate",
+      "甲基丙烯酸缩水甘油酯"
+    ],
+    "mat_glycidyl_methacrylate": [
+      "GMA",
+      "glycidyl methacrylate",
+      "Glycidyl methacrylate",
+      "Glycidyl Methacrylate",
+      "Glycidyl methacrylate (GMA)",
+      "MAT_gma",
+      "MAT_glycidyl_methacrylate",
+      "甲基丙烯酸缩水甘油酯"
+    ],
+    "甲基丙烯酸缩水甘油酯": [
+      "GMA",
+      "glycidyl methacrylate",
+      "Glycidyl methacrylate",
+      "Glycidyl Methacrylate",
+      "Glycidyl methacrylate (GMA)",
+      "MAT_gma",
+      "MAT_glycidyl_methacrylate",
+      "甲基丙烯酸缩水甘油酯"
+    ]
+  }
+}

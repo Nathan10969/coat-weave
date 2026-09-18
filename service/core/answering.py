@@ -504,6 +504,29 @@ def _compact_current_tool_observation(observation: Any) -> dict[str, Any]:
             kept["evidence"] = evidence[:5]
         compact_items.append(kept)
     result["items"] = compact_items
+    if "exact_items" in result or compact_items:
+        result["exact_items"] = compact_items
+    compact_adjacent: list[dict[str, Any]] = []
+    for row in result.get("adjacent_items") or []:
+        if not isinstance(row, dict):
+            continue
+        item = row.get("item") if isinstance(row.get("item"), dict) else {}
+        kept_item = {
+            key: copy.deepcopy(item.get(key))
+            for key in ("rank", "object_id", "doc_id", "hyperedge_id", "score")
+            if item.get(key) is not None
+        }
+        compact_adjacent.append(
+            {
+                "item": kept_item,
+                "satisfied_constraints": list(row.get("satisfied_constraints") or [])[:12],
+                "unmet_constraints": list(row.get("unmet_constraints") or [])[:12],
+            }
+        )
+    if "adjacent_items" in result or compact_adjacent:
+        result["adjacent_items"] = compact_adjacent[:20]
+    if "adjacent_relaxed_filters" in result and not isinstance(result.get("adjacent_relaxed_filters"), dict):
+        result["adjacent_relaxed_filters"] = {}
     copied["result"] = result
     return copied
 
@@ -638,6 +661,12 @@ def build_model_messages(
         "If a later kg.expand_hyperedge_multihop observation exists for the same question, use that expanded evidence "
         "for page/table/quote citations. Do not cite page/table/quote from kg.hybrid_search alone; say that evidence "
         "expansion still requires kg.expand_hyperedge_multihop on selected object_ids when no expansion is present.\n"
+        "CRITICAL exact vs adjacent envelope for kg.hybrid_search: "
+        "exact_items (or items when exact_items absent) are the ONLY exact-channel hits under the applied hard filters; "
+        "adjacent_items are near-miss evidence after relaxing one constraint and must NEVER be counted or phrased as exact hits. "
+        "If exact_items/items are empty and adjacent_items are present, say plainly that the exact filter scope missed, "
+        "then present adjacent evidence as 相邻/近似证据（未计入精确结果）, naming adjacent_relaxed_filters when present. "
+        "Never merge adjacent_items into an exact count, never call them 精确命中, and never hide that they are adjacent-only.\n"
         "The code-level evidence_gate is authoritative: candidate_only is never evidence, blocked forbids concrete "
         "formulation/page/performance claims, and only verified expanded items may support those claims. "
         "If evidence_gate.status=verified and partial=true, the retained items are usable verified evidence: answer from "
@@ -953,12 +982,28 @@ def structured_tool_fallback_answer(packet: dict[str, Any]) -> str:
             if status == "empty":
                 return "回答模型超时，但结构化统计已经完成：当前筛选口径未命中记录。"
         if observation.get("tool") == "kg.hybrid_search" and status in {"ok", "empty"}:
+            exact_items = result.get("exact_items")
+            if not isinstance(exact_items, list):
+                exact_items = result.get("items") or []
             doc_ids = list(dict.fromkeys(
-                str(item.get("doc_id")) for item in result.get("items") or []
+                str(item.get("doc_id")) for item in exact_items
                 if isinstance(item, dict) and item.get("doc_id")
             ))
             if doc_ids:
-                return "回答模型超时，但候选检索已经完成。命中的专利包括：" + "、".join(doc_ids[:10]) + "。"
+                return "回答模型超时，但候选检索已经完成。精确命中的专利包括：" + "、".join(doc_ids[:10]) + "。"
+            adjacent = result.get("adjacent_items") or []
+            if adjacent:
+                adj_ids = []
+                for row in adjacent:
+                    item = row.get("item") if isinstance(row, dict) else None
+                    if isinstance(item, dict) and item.get("doc_id"):
+                        adj_ids.append(str(item["doc_id"]))
+                adj_ids = list(dict.fromkeys(adj_ids))
+                if adj_ids:
+                    return (
+                        "回答模型超时，但候选检索已经完成：精确口径未命中；"
+                        "仅有相邻证据（未计入精确结果）：" + "、".join(adj_ids[:10]) + "。"
+                    )
             return "回答模型超时，但候选检索已经完成：当前筛选口径未命中记录。"
     return "回答模型本轮超时，且没有可安全渲染的结构化工具结果。"
 

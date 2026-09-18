@@ -1,9 +1,9 @@
 {
   "schema": "coatweave.public-source-manifest.v1",
-  "sequence": 8,
-  "source_branch": "fix/20260820-routing-contract",
-  "source_tip_sha": "d87d0eff0fc25cd9d5b0c617584bec188c224f34",
-  "source_timestamp": "2026-08-20T12:58:58+08:00",
+  "sequence": 9,
+  "source_branch": "snapshot/20260907",
+  "source_tip_sha": "bef18b9277efbad2d7a8a3a832264c908cd12977",
+  "source_timestamp": "2026-09-07T19:47:17-07:00",
   "cadence": "manual_early_override",
   "maintainer": "Nathan10969",
   "files": [
@@ -670,7 +670,7 @@
     {
       "path": "HANDOFF.md",
       "bytes": 1597,
-      "sha256": "a960749c5f3fde09b444300efd601f798ab6cd193966629c756a5937b5106837"
+      "sha256": "eee36b1f4205bce89cf0fac6bbc19af502fdafdc59c5bac75ae1ce8c738f4d2f"
     },
     {
       "path": "LICENSE",
@@ -679,8 +679,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 2808,
-      "sha256": "bf505a027af9427799e71d20806c0d492800d88f0aac81f24788ef9d7266e2f0"
+      "bytes": 2796,
+      "sha256": "398e415ea258623bc13e950c7a3694b24f119c5139f545c6b0a97aa47d310e3e"
     },
     {
       "path": "service/api/__init__.py",
@@ -733,19 +733,44 @@
       "sha256": "fb8e6f3b51e683aab26520a1fc2929c3f82202ee6f9706d8c790928cb2adce3c"
     },
     {
+      "path": "service/config/coating_family_aliases.json",
+      "bytes": 902,
+      "sha256": "1f6eb06c6eafc7d66608556f80ff0d530498354c04f98fa3458b7ffebcd7926c"
+    },
+    {
+      "path": "service/config/coating_family_concepts.json",
+      "bytes": 543,
+      "sha256": "9bac2fe51b27c0f7b3762d00a1400424aee38790ae67a7368f896c667f96f3d8"
+    },
+    {
+      "path": "service/config/coating_family_multi_value.json",
+      "bytes": 468,
+      "sha256": "066e4f2f1382afbb6e2318f04042892bce9ab0a298f215ffc830ad3a83f8f3d3"
+    },
+    {
       "path": "service/config/kg_filter_vocab.json",
       "bytes": 812,
       "sha256": "592c05baf463d0c7dcc22bdcff4c93fe96894cd3bfe9375b7535eccfc9469c67"
     },
     {
       "path": "service/config/kg_tool_contract.json",
-      "bytes": 8205,
-      "sha256": "923def0d01ee05786d530753dc87dcdae599f1f18219bb1341d62817a497389c"
+      "bytes": 10827,
+      "sha256": "393fc6c21d2a0134aab9adebbc2bc781ba03033226ae9db47f7c9457dd123300"
+    },
+    {
+      "path": "service/config/material_aliases.json",
+      "bytes": 1767,
+      "sha256": "93a92635fd702decd8909e731d8a99b0762b640e59270f81442288fbd8c19519"
+    },
+    {
+      "path": "service/config/material_resin_aliases.json",
+      "bytes": 645,
+      "sha256": "098886bb40cd9fdeed56027464bc07bbe4a2b8875807a1e8c89ea63185eb1263"
     },
     {
       "path": "service/core/answering.py",
-      "bytes": 58696,
-      "sha256": "19b234e7a5b08ee794a934ce7f10b69bef923a28aa793a3b5803d31c96fe83c5"
+      "bytes": 61346,
+      "sha256": "b4f4653903a56c98d67a64edc4005dc7f41049497daab744f07b91378182446f"
     },
     {
       "path": "service/core/app.py",
@@ -774,8 +799,8 @@
     },
     {
       "path": "service/core/kg_contract.py",
-      "bytes": 7378,
-      "sha256": "1d6fc1fb133fab7247fc3df22810a824357a1dd590310355c735d8696761210d"
+      "bytes": 22579,
+      "sha256": "7fc893894cd4cf197e5515cea650811417c842f3ed084ae32c65ab97e827f524"
     },
     {
       "path": "service/core/memory_core.py",
@@ -784,8 +809,8 @@
     },
     {
       "path": "service/core/routing.py",
-      "bytes": 114194,
-      "sha256": "04dfc7a14bfc89432eb85e0c635ec532b51d748fb0281a81308b19915e339949"
+      "bytes": 114415,
+      "sha256": "b3416f0156bab2769a854138d6b356a0ef51e3f1b3eae819a2799c361bc30b31"
     },
     {
       "path": "service/core/scope_state.py",
@@ -819,8 +844,18 @@
     },
     {
       "path": "service/kg_tools/kg_expand_http_service.py",
-      "bytes": 182533,
-      "sha256": "ecf73ab141c589def947e1edb680636f7cb1cd7e14e3c599afad8aadd6b900f4"
+      "bytes": 206834,
+      "sha256": "6e07345814b76a4a4632deddc4da055dce159bfdb095c4dffee97d0e15653930"
+    },
+    {
+      "path": "service/ops/migrations/2026-06-12_application_family_taxonomy/application_family_taxonomy.json",
+      "bytes": 45894,
+      "sha256": "36ee158bddab4aa3bb06682d9b1f9fe30bc396d238046378d2f3491060683180"
+    },
+    {
+      "path": "service/ops/migrations/2026-06-12_application_family_taxonomy/remap_application_family.py",
+      "bytes": 4419,
+      "sha256": "e5d948828606b5064c387177e94a39df1672d6818c1289a76688651048fa4b78"
     },
     {
       "path": "service/README.md",
@@ -888,6 +923,11 @@
       "sha256": "1b9ba8f559196d10cda347f389979edd9b69dec6c3b6df52931aea23bbe89418"
     },
     {
+      "path": "service/tests/test_ab_filter_contract.py",
+      "bytes": 7598,
+      "sha256": "5bee2fc2b9c1b4b8a238de1861b5b4d5bcec7f08ec925d26fc5b8dd923a7db4d"
+    },
+    {
       "path": "service/tests/test_model_packet_projection.py",
       "bytes": 10108,
       "sha256": "bfb5e484d20b94a0c8a631c86dfab86567e2e3c08165b384d7c0d8650efc4d86"
@@ -921,6 +961,11 @@
       "path": "SNAPSHOT_20260820.md",
       "bytes": 2480,
       "sha256": "24dfba63e298dd9381ec04a491baeb14f3e4842dab51ac89a953327fa771df85"
+    },
+    {
+      "path": "SNAPSHOT_20260907.md",
+      "bytes": 2707,
+      "sha256": "55622c780fcab01ed68dcecc75d3d9f2ff7d9712374cff778e213feeb65402c1"
     }
   ]
 }
