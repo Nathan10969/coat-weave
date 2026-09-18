@@ -14,7 +14,7 @@ def _app_value(name: str, default: Any) -> Any:
 
 
 def default_scope_state() -> dict[str, Any]:
-    return {"active_doc_scope": None, "scope_history": [], "last_scope_resolution": None}
+    return {"active_doc_scope": None, "scope_history": [], "last_scope_resolution": None, "last_scope_event": None}
 
 def normalize_scope_state(value: Any) -> dict[str, Any]:
     state = value if isinstance(value, dict) else {}
@@ -39,6 +39,7 @@ def normalize_scope_state(value: Any) -> dict[str, Any]:
         "active_doc_scope": active,
         "scope_history": history[:10],
         "last_scope_resolution": state.get("last_scope_resolution"),
+        "last_scope_event": state.get("last_scope_event"),
     }
 
 def load_scope_state() -> dict[str, Any]:
@@ -141,6 +142,9 @@ DOCUMENT_LOCAL_TERMS = [
     "哪个panel",
     "哪个 panel",
     "哪块板",
+    "完整实施例",
+    "实施例",
+    "完整配方",
 ]
 
 AMBIGUOUS_COMPARISON_TERMS = [
@@ -198,6 +202,8 @@ def make_scope_resolution(
 def remember_scope_resolution(state: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
     state = normalize_scope_state(state)
     state["last_scope_resolution"] = resolution
+    if resolution.get("scope_action") in {"set_new", "clear_global"}:
+        state["last_scope_event"] = resolution
     save_scope_state(state)
     return state
 

@@ -60,6 +60,9 @@ def kg_hybrid_search(
     candidate_k: int = KG_HYBRID_DEFAULT_CANDIDATE_K,
     offset: int = 0,
     filters: dict[str, Any] | None = None,
+    requested_filters: dict[str, Any] | None = None,
+    unsupported_constraints: list[str] | None = None,
+    route_adjustments: list[str] | None = None,
 ) -> dict[str, Any]:
     body = {
         "query": query,
@@ -67,6 +70,9 @@ def kg_hybrid_search(
         "candidate_k": candidate_k,
         "offset": offset,
         "filters": normalize_kg_search_filters(filters),
+        "requested_filters": requested_filters if isinstance(requested_filters, dict) else (filters or {}),
+        "unsupported_constraints": normalize_string_list(unsupported_constraints),
+        "route_adjustments": normalize_string_list(route_adjustments),
     }
     headers = {
         "Content-Type": "application/json",
@@ -97,6 +103,9 @@ def kg_sql_aggregate(
     group_by: list[str] | None = None,
     limit: int = 50,
     include_examples: bool = True,
+    requested_filters: dict[str, Any] | None = None,
+    unsupported_constraints: list[str] | None = None,
+    route_adjustments: list[str] | None = None,
 ) -> dict[str, Any]:
     body = {
         "intent": intent,
@@ -105,6 +114,9 @@ def kg_sql_aggregate(
         "group_by": normalize_string_list(group_by),
         "limit": clamp_int(limit, 50, 1, 200),
         "include_examples": bool(include_examples),
+        "requested_filters": requested_filters if isinstance(requested_filters, dict) else (filters or {}),
+        "unsupported_constraints": normalize_string_list(unsupported_constraints),
+        "route_adjustments": normalize_string_list(route_adjustments),
     }
     headers = {
         "Content-Type": "application/json",

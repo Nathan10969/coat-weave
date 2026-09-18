@@ -216,7 +216,6 @@ def test_answer_gate_keeps_complete_items_from_partial_expansion() -> None:
         "excluded_count": 1,
         "reason": "incomplete_items_excluded",
     }
-    assert answering.blocked_evidence_answer({"tool_observations": gated}) is None
 
 
 def test_answer_gate_blocks_partial_expansion_without_complete_items() -> None:
@@ -249,7 +248,6 @@ def test_answer_gate_blocks_partial_expansion_without_complete_items() -> None:
         "reason": "no_complete_expanded_items",
         "verified_count": 0,
     }
-    assert answering.blocked_evidence_answer({"tool_observations": gated})
 def test_answer_gate_keeps_only_complete_expanded_evidence() -> None:
     observations = [
         {
@@ -275,20 +273,3 @@ def test_answer_gate_keeps_only_complete_expanded_evidence() -> None:
 
     assert len(gated[0]["result"]["items"]) == 1
     assert gated[0]["result"]["evidence_gate"] == {"status": "verified", "verified_count": 1}
-
-
-def test_blocked_expand_short_circuits_the_answer_model() -> None:
-    packet = {
-        "tool_observations": [
-            {
-                "tool": "kg.expand_hyperedge_multihop",
-                "status": "ok",
-                "result": {"evidence_gate": {"status": "blocked"}, "items": []},
-            }
-        ]
-    }
-
-    answer = answering.blocked_evidence_answer(packet)
-
-    assert answer
-    assert "不能" in answer

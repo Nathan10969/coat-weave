@@ -4,6 +4,8 @@ import hashlib
 import re
 from typing import Any
 
+from kg_contract import load_tool_contract, normalize_filter_request, normalize_material_roles as contract_material_roles
+
 
 def tokenize(text: str) -> set[str]:
     return {
@@ -29,7 +31,10 @@ DOC_ID_PATTERNS = (
     re.compile(r"(?<![A-Za-z0-9])([0-9]+_WO[0-9]{6,}[A-Z0-9]*)(?![A-Za-z0-9])", re.IGNORECASE),
     re.compile(r"(?<![A-Za-z0-9_])(WO[0-9]{6,}[A-Z0-9]*)(?![A-Za-z0-9])", re.IGNORECASE),
     re.compile(r"(?<![A-Za-z0-9_])(O[0-9]{6,}[A-Z][A-Z0-9]*)(?![A-Za-z0-9])", re.IGNORECASE),
+    re.compile(r"(?<![A-Za-z0-9_])(WO\s*\d{4}\s*/\s*\d{6}\s*[A-Z]\d)(?![A-Za-z0-9])", re.IGNORECASE),
 )
+
+PUBLICATION_ID_PATTERN = re.compile(r"(?:^|::)(?:\d+_)?(WO\d{10}[A-Z]\d)(?:$|::)", re.IGNORECASE)
 
 
 def extract_hyperedge_object_ids(text: str) -> list[str]:
@@ -67,11 +72,32 @@ def normalize_doc_id(value: Any) -> str:
     return ""
 
 
+def doc_id_lookup_key(value: Any) -> str:
+    """Return a lookup-only publication key without changing stored IDs."""
+    text = str(value or "").strip().upper()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", "", text)
+    text = text.replace("/", "")
+    segments = [segment for segment in text.split("::") if segment]
+    for segment in segments or [text]:
+        match = re.search(r"(?:^|_)(WO\d{10}[A-Z]\d)$", segment, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+        missing_w = re.search(r"(?:^|_)(O\d{10}[A-Z]\d)$", segment, flags=re.IGNORECASE)
+        if missing_w:
+            return f"W{missing_w.group(1).upper()}"
+    match = PUBLICATION_ID_PATTERN.search(text)
+    return match.group(1).upper() if match else ""
+
+
 def extract_doc_ids(text: str) -> list[str]:
     hits: list[tuple[int, str]] = []
     for pattern in DOC_ID_PATTERNS:
         for match in pattern.finditer(text or ""):
             doc_id = normalize_doc_id(match.group(1))
+            if not doc_id:
+                doc_id = doc_id_lookup_key(match.group(1))
             if doc_id:
                 hits.append((match.start(), doc_id))
     out: list[str] = []
@@ -124,56 +150,20 @@ def normalize_string_list(value: Any) -> list[str]:
     return out
 
 
+_KG_CONTRACT = load_tool_contract()
 KG_SEARCH_SOFT_FILTER_ALIASES: dict[str, tuple[str, ...]] = {
-    "application_family": ("application_family", "application_families"),
-    "applications": ("applications", "application"),
-    "substrates": ("substrates", "substrate"),
-    "test_methods": ("test_methods", "test_method"),
-    "test_standards": ("test_standards", "test_standard", "standards"),
-    "material_roles": ("material_roles", "material_role"),
-    "assignees": ("assignees", "assignee", "applicants"),
-    "property_families": ("property_families", "property_family"),
-    "property_canonical_ids_soft": (
-        "property_canonical_ids_soft",
-        "soft_property_canonical_ids",
-        "property_canonical_ids",
-    ),
+    key: tuple(values)
+    for key, values in (_KG_CONTRACT.get("filter_aliases") or {}).items()
 }
-
-VALID_MATERIAL_ROLES = frozenset(
-    {"resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"}
-)
-MATERIAL_ROLE_ALIASES = {
-    "pigments": "pigment",
-    "fillers": "filler",
-    "additives": "additive",
-    "solvents": "solvent",
-    "catalysts": "catalyst",
-    "curing agents": "curing_agent",
-    "curing_agents": "curing_agent",
-    "hardener": "curing_agent",
-    "hardeners": "curing_agent",
-}
+VALID_MATERIAL_ROLES = frozenset((_KG_CONTRACT.get("material_roles") or {}).get("values") or [])
+MATERIAL_ROLE_ALIASES = dict((_KG_CONTRACT.get("material_roles") or {}).get("aliases") or {})
 
 
 def normalize_material_roles(value: Any) -> list[str]:
-    roles: list[str] = []
-    for item in normalize_string_list(value):
-        normalized = MATERIAL_ROLE_ALIASES.get(item.strip().casefold(), item.strip().casefold())
-        if normalized in VALID_MATERIAL_ROLES and normalized not in roles:
-            roles.append(normalized)
-    return roles
+    return contract_material_roles(value, _KG_CONTRACT)[0]
 
 
-INVALID_EXAMPLE_KIND_FILTER_VALUES = {
-    "formulation",
-    "formula",
-    "recipe",
-    "coating system",
-    "coating_system",
-    "paint system",
-    "paint_system",
-}
+INVALID_EXAMPLE_KIND_FILTER_VALUES = set(_KG_CONTRACT.get("invalid_example_kind_values") or [])
 
 
 def normalize_example_kind_filter(value: Any) -> list[str]:
@@ -192,29 +182,12 @@ def first_present_filter_value(raw: dict[str, Any], aliases: tuple[str, ...]) ->
 
 
 def normalize_kg_search_filters(value: Any) -> dict[str, Any]:
-    raw = value if isinstance(value, dict) else {}
-    qa_policy = str(raw.get("qa_policy") or "include_all").strip() or "include_all"
-    if qa_policy not in {"include_all", "core_only", "qa_only"}:
-        qa_policy = "include_all"
-    filters = {
-        "doc_ids": normalize_string_list(raw.get("doc_ids")),
-        "properties": normalize_string_list(raw.get("properties")),
-        "polarity": normalize_string_list(raw.get("polarity")),
-        "example_kind": normalize_example_kind_filter(raw.get("example_kind")),
-        "qa_policy": qa_policy,
-    }
-    for key, aliases in KG_SEARCH_SOFT_FILTER_ALIASES.items():
-        filters[key] = normalize_string_list(first_present_filter_value(raw, aliases))
-    filters["material_roles"] = normalize_material_roles(
-        first_present_filter_value(raw, KG_SEARCH_SOFT_FILTER_ALIASES["material_roles"])
-    )
+    filters = normalize_filter_request("kg.hybrid_search", value)["effective_filters"]
+    filters["example_kind"] = normalize_example_kind_filter(filters.get("example_kind"))
     return filters
 
 
 def normalize_kg_aggregate_filters(value: Any) -> dict[str, Any]:
-    raw = value if isinstance(value, dict) else {}
-    filters = normalize_kg_search_filters(raw)
-    filters["application_family"] = normalize_string_list(
-        raw.get("application_family") or raw.get("application_families")
-    )
+    filters = normalize_filter_request("kg.sql_aggregate", value)["effective_filters"]
+    filters["example_kind"] = normalize_example_kind_filter(filters.get("example_kind"))
     return filters

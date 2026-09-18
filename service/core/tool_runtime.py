@@ -53,11 +53,8 @@ def record_tool_observation(
 ) -> dict[str, Any]:
     tool_name = tool or result.get("tool") or "external.tool"
     obs_id = f"tool_{int(time.time() * 1000)}_{stable_id('obs', tool_name)[4:]}"
-    # Surface "empty" instead of flattening it to "ok" — an empty aggregate is
-    # not a successful count, and downstream must be able to tell the
-    # difference. Other tool statuses stay mapped to "ok" so the observation
-    # status enum remains {ok, empty, error} for prompt rules and the API.
-    status = "error" if error else ("empty" if result.get("status") == "empty" else "ok")
+    result_status = str(result.get("status") or "ok")
+    status = "error" if error else result_status if result_status in {"ok", "empty", "unsupported"} else "ok"
     row = {
         "id": obs_id,
         "session_id": _app_value("SESSION_ID", SESSION_ID),
@@ -665,6 +662,9 @@ def run_kg_hybrid_search_for_call(call: dict[str, Any], question: str, query: st
             ),
             offset=max(0, int_or_default(call.get("offset"), 0)),
             filters=call.get("filters"),
+            requested_filters=call.get("requested_filters"),
+            unsupported_constraints=call.get("unsupported_constraints"),
+            route_adjustments=call.get("route_adjustments"),
         )
         for variant in query_variants
     ]
@@ -736,73 +736,18 @@ def retry_empty_aggregate(
     limit: int,
     include_examples: bool,
 ) -> dict[str, Any]:
-    """An empty aggregate under non-empty filters is a filter miss until proven
-    otherwise (2026-06-12 trace: application_family=['optical fiber'] → 0 while
-    the same terms matched 31 patents via substrates). Mirrors the
-    doc_field_scan empty-fallback design, which sql_aggregate lacked.
+    """Preserve an empty aggregate exactly as requested.
 
-    Only application_family values OUTSIDE the exported vocabulary are demoted
-    to substrates — those can never match the backend's exact matcher, so the
-    empty is provably a dimension mismatch. Vocabulary-valid values stay put:
-    their empty intersection is a true negative and must not be rewritten into
-    a different (union-ish) scope. Without a vocabulary file every value is
-    treated as a potential miss (the incident path stays covered).
-
-    The unfiltered total is fetched only when the result stays empty, so the
-    answer can say "按口径未命中,全库共N" — a successful retry must not carry
-    the all-KG number back into the answer context.
+    Older code retried unknown application families as substrates. That changed
+    the user's cohort and could turn an honest zero into an unrelated count.
+    The shared contract now makes unsupported dimensions explicit, so an empty
+    result is final and never retried with modified filters.
     """
-    final = empty_result
-    known = load_kg_filter_vocab().get("application_family") or set()
-    family_values = list(filters.get("application_family") or [])
-    if known:
-        moved = [
-            value
-            for value in family_values
-            if str(value).strip().lower() not in APPLICATION_FAMILY_EXACT_MATCH_EXEMPT
-            and str(value).strip().lower() not in known
-        ]
-    else:
-        moved = family_values
-    if moved:
-        retry_filters = dict(filters)
-        retry_filters["application_family"] = [value for value in family_values if value not in moved]
-        retry_filters["substrates"] = normalize_string_list(list(filters.get("substrates") or []) + moved)
-        retried = aggregate_client(
-            intent=intent,
-            target=target,
-            filters=retry_filters,
-            group_by=group_by,
-            limit=limit,
-            include_examples=include_examples,
-        )
-        if retried.get("status") != "empty":
-            retried["fallback_note"] = {
-                "reason": "application_family values outside the vocabulary matched nothing; retried as substrates",
-                "original_filters": filters,
-            }
-            append_tool_warning(retried, "application_family_filter_miss_retried_as_substrates")
-            final = retried
-    if final.get("status") == "empty":
-        if moved or not known:
-            append_tool_warning(final, AGGREGATE_EMPTY_FILTER_MISS_WARNING)
-        else:
-            append_tool_warning(final, AGGREGATE_EMPTY_TRUE_ZERO_WARNING)
-        try:
-            unfiltered = aggregate_client(
-                intent=intent,
-                target=target,
-                filters=None,
-                group_by=[],
-                limit=1,
-                include_examples=False,
-            )
-            total = (unfiltered.get("summary") or {}).get("distinct_count")
-            if total is not None:
-                final["unfiltered_total_distinct_count"] = total
-        except Exception:  # noqa: BLE001 — the total is diagnostic context; never lose the primary result over it
-            pass
-    return final
+    if empty_result.get("status") == "unsupported":
+        return empty_result
+    append_tool_warning(empty_result, AGGREGATE_EMPTY_TRUE_ZERO_WARNING)
+    empty_result.setdefault("route_adjustments", [])
+    return empty_result
 
 
 def mark_doc_scan_no_structured_coverage(result: dict[str, Any]) -> None:
@@ -879,6 +824,9 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
                     group_by=aggregate_group_by,
                     limit=aggregate_limit,
                     include_examples=aggregate_examples,
+                    requested_filters=call.get("requested_filters"),
+                    unsupported_constraints=call.get("unsupported_constraints"),
+                    route_adjustments=call.get("route_adjustments"),
                 )
                 if result.get("status") == "empty" and aggregate_filters_in_use(aggregate_filters):
                     result = retry_empty_aggregate(

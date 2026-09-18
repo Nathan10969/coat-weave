@@ -86,24 +86,6 @@ def gate_tool_observations_for_answer(observations: Any) -> list[dict[str, Any]]
     return gated
 
 
-def blocked_evidence_answer(packet: dict[str, Any]) -> str | None:
-    gates: list[str] = []
-    for observation in packet.get("tool_observations") or []:
-        if not isinstance(observation, dict) or observation.get("tool") != "kg.expand_hyperedge_multihop":
-            continue
-        result = observation.get("result") if isinstance(observation.get("result"), dict) else {}
-        gate = result.get("evidence_gate") if isinstance(result.get("evidence_gate"), dict) else {}
-        status = str(gate.get("status") or "").strip().casefold()
-        if status:
-            gates.append(status)
-    if "verified" in gates or "blocked" not in gates:
-        return None
-    return (
-        "本轮只完成了候选定位，但原始事实与证据未能完整展开。"
-        "为避免把候选内容误当成证据，我不能在这次回答中给出具体配方、页码或性能结论。"
-    )
-
-
 def _int_env(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
@@ -149,7 +131,7 @@ def provider_config() -> dict[str, Any]:
     context_window_tokens = int(os.environ.get("LLM_CONTEXT_WINDOW_TOKENS") or os.environ.get("QWEN_CONTEXT_WINDOW_TOKENS", "1000000"))
     max_output_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS") or os.environ.get("QWEN_MAX_OUTPUT_TOKENS", "65536"))
     stream_chunk_chars = int(os.environ.get("LLM_STREAM_CHUNK_CHARS", "4"))
-    stream_read_timeout_seconds = _int_env("LLM_STREAM_READ_TIMEOUT_SECONDS", 30)
+    stream_read_timeout_seconds = _int_env("LLM_STREAM_READ_TIMEOUT_SECONDS", 60)
     stream_first_token_timeout_seconds = _int_env("LLM_STREAM_FIRST_TOKEN_TIMEOUT_SECONDS", 45)
     stream_content_idle_timeout_seconds = _int_env("LLM_STREAM_CONTENT_IDLE_TIMEOUT_SECONDS", 45)
     stream_total_timeout_seconds = _int_env("LLM_STREAM_TOTAL_TIMEOUT_SECONDS", 180)
@@ -207,6 +189,13 @@ def stream_timeout_customer_message(reason: str, *, had_content: bool) -> str:
     if had_content:
         return f"\n\n[回答因{label}被截断。前面的内容已保留，可以继续追问“继续”。]"
     return f"模型流式响应因{label}中止，没有收到可用内容。可以稍后重试或换一个更窄的问题。"
+
+
+def set_response_socket_timeout(response: Any, seconds: int) -> None:
+    try:
+        response.fp.raw._sock.settimeout(max(1, int(seconds)))
+    except (AttributeError, OSError):
+        return
 
 
 def apply_thinking_config(body: dict[str, Any], cfg: dict[str, Any]) -> None:
@@ -461,7 +450,109 @@ def project_model_packet(packet: dict[str, Any]) -> dict[str, Any]:
     return model_packet
 
 
-def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str, str]]:
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _compact_historical_tool_observation(observation: Any) -> dict[str, Any]:
+    if not isinstance(observation, dict):
+        return {}
+    result = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+    return {
+        "tool": observation.get("tool"),
+        "status": observation.get("status"),
+        "result": {
+            "status": result.get("status"),
+            "summary": result.get("summary"),
+            "requested_filters": result.get("requested_filters"),
+            "effective_filters": result.get("effective_filters"),
+            "unsupported_constraints": result.get("unsupported_constraints"),
+            "route_adjustments": result.get("route_adjustments"),
+            "cohort_mode": result.get("cohort_mode"),
+            "count_unit": result.get("count_unit"),
+        },
+    }
+
+
+def _compact_current_tool_observation(observation: Any) -> dict[str, Any]:
+    if not isinstance(observation, dict):
+        return {}
+    copied = copy.deepcopy(observation)
+    result = copied.get("result") if isinstance(copied.get("result"), dict) else {}
+    compact_items: list[dict[str, Any]] = []
+    for item in result.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        kept = {
+            key: copy.deepcopy(item.get(key))
+            for key in (
+                "rank", "value", "canonical_id", "count", "doc_count", "assignee_count", "assignees",
+                "object_id", "doc_id", "hyperedge_id", "sample_id", "property", "material_role", "page",
+                "facts", "unresolved", "evidence_gate", "examples",
+            )
+            if item.get(key) is not None
+        }
+        evidence = []
+        for row in item.get("evidence") or []:
+            if not isinstance(row, dict):
+                continue
+            evidence.append({
+                **{key: row.get(key) for key in ("evidence_id", "page", "section", "table", "row_label") if row.get(key) is not None},
+                "quote": str(row.get("quote") or "")[:900],
+            })
+        if evidence:
+            kept["evidence"] = evidence[:5]
+        compact_items.append(kept)
+    result["items"] = compact_items
+    copied["result"] = result
+    return copied
+
+
+def compact_packet_for_answer(packet: dict[str, Any], max_bytes: int | None = None) -> dict[str, Any]:
+    budget = max_bytes or _int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024)
+    projected = project_model_packet(packet)
+    projected["recent_turns"] = [
+        {**turn, "content": str(turn.get("content") or "")[:1200]}
+        for turn in (projected.get("recent_turns") or [])[-3:]
+        if isinstance(turn, dict)
+    ]
+    projected["recent_tool_observations"] = [
+        _compact_historical_tool_observation(item)
+        for item in (projected.get("recent_tool_observations") or [])[-3:]
+    ]
+    projected["tool_routing_decisions"] = (projected.get("tool_routing_decisions") or [])[-3:]
+    projected["recent_observations"] = (projected.get("recent_observations") or [])[-3:]
+    projected["tool_observations"] = [
+        _compact_current_tool_observation(item) for item in projected.get("tool_observations") or []
+    ]
+    while _json_size(projected) > budget:
+        candidates = [
+            observation.get("result", {}).get("items", [])
+            for observation in projected.get("tool_observations") or []
+            if isinstance(observation, dict) and isinstance(observation.get("result"), dict)
+        ]
+        largest = max(candidates, key=len, default=[])
+        if largest:
+            largest.pop()
+            continue
+        removed = False
+        for section in ("recent_tool_observations", "recent_observations", "tool_routing_decisions", "recent_turns"):
+            rows = projected.get(section)
+            if isinstance(rows, list) and rows:
+                rows.pop(0)
+                removed = True
+                break
+        if not removed:
+            break
+    return projected
+
+
+def build_model_messages(
+    question: str,
+    packet: dict[str, Any],
+    *,
+    max_packet_bytes: int | None = None,
+) -> list[dict[str, str]]:
     system = (
         "你是一个项目对话记忆助手。你会收到 Dialogue Memory Packet 和用户当前问题。"
         "请优先使用 active 记忆；不要把 stale 或 superseded 记忆当作当前事实。"
@@ -497,24 +588,30 @@ def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str
         "CRITICAL — you cannot retry tools mid-conversation. The current tool_observations are whatever the router "
         "produced for THIS user message. You must answer with what's available. NEVER offer phrases like "
         "\"需要我重新查询吗\", \"是否需要我重新统计\", \"要不要重新检索\", \"do you want me to retry\", or any "
-        "yes/no question asking permission to re-run a tool — the customer saying \"好/yes\" cannot trigger a "
-        "re-query, so offering creates a dead loop. If the current result is too broad (e.g. the aggregate "
-        "returned all 18697 formulations but the user asked for a substrate-filtered subset), say plainly: "
-        "\"我这次拿到的是全库总数,没按碳纤维基底过滤;请再问一遍并明确说『按碳纤维基底统计配方数量』,我下一轮会带上 "
-        "substrates=['carbon fiber'] 这个筛选去查\" — give the user a concrete next phrasing to copy, do not ask "
-        "them to confirm a retry.\n"
+        "yes/no question asking permission to re-run a tool. Never tell the user to repeat or rephrase the same "
+        "question. If a tool result has status=unsupported, explain the unsupported_constraints once in plain Chinese, "
+        "preserve any useful supported result, and reuse the same receipt if the user repeats the request. "
+        "requested_filters are what was asked, effective_filters are what was actually applied, and route_adjustments "
+        "must never be hidden.\n"
         "RESPECT THE COUNT THE USER ASKED FOR. If the user says \"给我一个/一篇/一种\" (one), present exactly ONE "
         "(the most representative) in full detail, then add at most one short line like \"库里还有 N 个相关的,需要可以继续\". "
         "Do not dump multiple full formulations when the user asked for one. If the user asks \"多少片/几篇\" (how many "
         "patents) answer with the patent COUNT (doc_id count), not the formulation count, and do not silently switch the "
         "counting unit. Keep the answered unit consistent with what the user counted.\n"
         "If tool_observations include kg.sql_aggregate, treat it as the only authoritative source for statistical "
-        "counts, distinct counts, grouped counts, and numeric distributions. Use summary.distinct_count, "
+        "counts, distinct counts, grouped counts, and numeric distributions. Use summary.total_count for the "
+        "overall number of target objects, summary.group_count for the number of groups, "
+        "summary.distinct_count only as the backward-compatible total, "
         "summary.matched_hyperedges, item.count, item.doc_count, item.assignee_count, item.assignees, "
         "and item.examples when explaining the result. "
         "Never infer totals from kg.hybrid_search top-k candidates or text_preview.\n"
         "A tool observation with status=empty is still a real call result (the filters simply matched nothing); "
         "do not call it simulated and do not treat it as a missing statistic.\n"
+        "Preserve patent sample labels such as Blank, Ref., Reference, CE, Comparative Example, and Control exactly as "
+        "the patent uses them; do not reinterpret them as commercial products or recommended formulations. "
+        "Do not state a publication trend unless a successful aggregate observation grouped by publication_year is present. "
+        "When adding general coating knowledge not supported by the current KG observations, introduce it explicitly as "
+        "模型补充 and never attach KG page numbers, patent IDs, or measured values to it.\n"
         "If packet.authoritative_count_statements is present, they are the only allowed claims about HOW MANY "
         "records/patents/formulations the KG holds for this turn: restate them as the headline of the answer. "
         "You may rephrase fluently, but the numbers, the filter scope, and the 全库/筛选口径/未命中 qualifiers must "
@@ -728,7 +825,7 @@ ISO 12944相关判断必须结合基材、表面处理、涂层体系、干膜�
     count_statements = aggregate_count_statements(packet)
     if count_statements:
         packet = {**packet, "authoritative_count_statements": count_statements}
-    packet = project_model_packet(packet)
+    packet = compact_packet_for_answer(packet, max_packet_bytes)
     return [
         {"role": "system", "content": system},
         {
@@ -828,6 +925,64 @@ def sanitize_customer_answer(answer: str) -> str:
     return text
 
 
+def structured_tool_fallback_answer(packet: dict[str, Any]) -> str:
+    observations = packet.get("tool_observations") if isinstance(packet, dict) else []
+    for observation in reversed(observations or []):
+        if not isinstance(observation, dict):
+            continue
+        result = observation.get("result") if isinstance(observation.get("result"), dict) else {}
+        status = str(result.get("status") or observation.get("status") or "").casefold()
+        unsupported = result.get("unsupported_constraints") or []
+        if status == "unsupported" or unsupported:
+            fields = "、".join(str(item) for item in unsupported) or "当前请求条件"
+            return f"本轮检索已完成能力校验，但当前工具还不能应用：{fields}。我没有用全库结果冒充筛选结果。"
+        if observation.get("tool") == "kg.sql_aggregate" and status in {"ok", "empty"}:
+            summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+            count = summary.get("total_count")
+            if count is None:
+                count = summary.get("distinct_count")
+            if count is None:
+                count = summary.get("matched_doc_count")
+            if count is None:
+                count = summary.get("matched_hyperedges")
+            unit = {"patent": "篇专利", "formulation": "个配方", "hyperedge": "条记录"}.get(
+                result.get("count_unit"), "条记录"
+            )
+            if count is not None:
+                return f"回答模型超时，但结构化统计已经完成：当前筛选口径共 {count} {unit}。"
+            if status == "empty":
+                return "回答模型超时，但结构化统计已经完成：当前筛选口径未命中记录。"
+        if observation.get("tool") == "kg.hybrid_search" and status in {"ok", "empty"}:
+            doc_ids = list(dict.fromkeys(
+                str(item.get("doc_id")) for item in result.get("items") or []
+                if isinstance(item, dict) and item.get("doc_id")
+            ))
+            if doc_ids:
+                return "回答模型超时，但候选检索已经完成。命中的专利包括：" + "、".join(doc_ids[:10]) + "。"
+            return "回答模型超时，但候选检索已经完成：当前筛选口径未命中记录。"
+    return "回答模型本轮超时，且没有可安全渲染的结构化工具结果。"
+
+
+def retry_compact_answer(question: str, packet: dict[str, Any], cfg: dict[str, Any]) -> str:
+    retry_budget = _int_env("LLM_MODEL_PACKET_RETRY_MAX_BYTES", 256 * 1024)
+    body = build_provider_body(
+        cfg,
+        build_model_messages(question, packet, max_packet_bytes=retry_budget),
+        temperature=0.2,
+        max_tokens=cfg["max_output_tokens"],
+        stream=False,
+    )
+    req = urllib.request.Request(
+        provider_messages_url(cfg),
+        data=json.dumps(body).encode("utf-8"),
+        headers=provider_headers(cfg),
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=max(1, int(cfg.get("stream_read_timeout_seconds") or 60))) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    return sanitize_customer_answer(extract_provider_text(payload, cfg))
+
+
 def stream_qwen(
     question: str,
     packet: dict[str, Any],
@@ -846,17 +1001,6 @@ def stream_qwen(
         }
         yield {"type": "done", "provider": "scope-resolver", "model": model}
         return
-    blocked_answer = blocked_evidence_answer(packet)
-    if blocked_answer:
-        yield {
-            "type": "delta",
-            "content": blocked_answer,
-            "provider": "evidence-gate",
-            "model": model,
-        }
-        yield {"type": "done", "provider": "evidence-gate", "model": model}
-        return
-
     api_key = cfg["api_key"]
     base_url = cfg["base_url"]
     if not api_key:
@@ -871,9 +1015,10 @@ def stream_qwen(
         yield {"type": "done", "provider": "local-mock", "model": "mock-memory-demo"}
         return
 
+    messages = build_model_messages(question, packet)
     body = build_provider_body(
         cfg,
-        build_model_messages(question, packet),
+        messages,
         temperature=0.4,
         max_tokens=cfg["max_output_tokens"],
         stream=True,
@@ -893,9 +1038,17 @@ def stream_qwen(
     # observation-only; never raises. When A/B thread diag_request_id down, all three
     # layers share one id (robust correlation); else auto-id + thread_id/ts fallback.
     diag = StreamDiagnostics(request_id=diag_request_id, conversation_id="", layer="core.answering.stream_qwen")
-    diag.event("upstream_read_start")
+    diag.event(
+        "upstream_read_start",
+        packet_bytes=len(json.dumps(messages, ensure_ascii=False).encode("utf-8")),
+        packet_limit_bytes=_int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024),
+    )
     try:
-        with urllib.request.urlopen(req, timeout=max(1, int(cfg.get("stream_read_timeout_seconds") or 30))) as resp:
+        initial_timeout = min(
+            max(1, int(cfg.get("stream_read_timeout_seconds") or 60)),
+            max(1, int(cfg.get("stream_first_token_timeout_seconds") or 45)),
+        )
+        with urllib.request.urlopen(req, timeout=initial_timeout) as resp:
             for raw_line in resp:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line:
@@ -938,6 +1091,7 @@ def stream_qwen(
                     now = time.monotonic()
                     if first_content_at is None:
                         first_content_at = now
+                        set_response_socket_timeout(resp, int(cfg.get("stream_read_timeout_seconds") or 60))
                     last_content_at = now
                     emitted = True
                     for unit in stream_delta_units(sanitize_customer_answer(content), cfg):
@@ -963,12 +1117,15 @@ def stream_qwen(
                 emitted=emitted,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
             )
-            yield {
-                "type": "delta",
-                "content": stream_timeout_customer_message(timeout_reason, had_content=emitted),
-                "provider": provider_label(cfg),
-                "model": model,
-            }
+            retry_answer = ""
+            if not emitted:
+                try:
+                    retry_answer = retry_compact_answer(question, packet, cfg)
+                    diag.event("compact_retry_succeeded", packet_limit_bytes=_int_env("LLM_MODEL_PACKET_RETRY_MAX_BYTES", 256 * 1024))
+                except Exception as exc:  # noqa: BLE001
+                    diag.event("compact_retry_failed", error=str(exc))
+            content = retry_answer or structured_tool_fallback_answer(packet)
+            yield {"type": "delta", "content": content, "provider": provider_label(cfg), "model": model}
             yield {"type": "done", "provider": provider_label(cfg), "model": model}
             return
         if not emitted and plain_lines:
@@ -987,13 +1144,20 @@ def stream_qwen(
         yield {"type": "done", "provider": provider_label(cfg), "model": model}
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, TimeoutError, json.JSONDecodeError) as exc:
         diag.event("upstream_exception", error=str(exc))
+        retry_answer = ""
+        if not emitted:
+            try:
+                retry_answer = retry_compact_answer(question, packet, cfg)
+                diag.event("compact_retry_succeeded", packet_limit_bytes=_int_env("LLM_MODEL_PACKET_RETRY_MAX_BYTES", 256 * 1024))
+            except Exception as retry_exc:  # noqa: BLE001
+                diag.event("compact_retry_failed", error=str(retry_exc))
         yield {
             "type": "delta",
-            "content": f"模型 API 流式调用失败，已保留本地记忆链路。错误：{exc}",
-            "provider": "openai-compatible-error",
+            "content": retry_answer or structured_tool_fallback_answer(packet),
+            "provider": provider_label(cfg) if retry_answer else "structured-tool-fallback",
             "model": model,
         }
-        yield {"type": "done", "provider": "openai-compatible-error", "model": model}
+        yield {"type": "done", "provider": provider_label(cfg) if retry_answer else "structured-tool-fallback", "model": model}
 
 
 def call_qwen(question: str, packet: dict[str, Any]) -> dict[str, Any]:
@@ -1001,10 +1165,6 @@ def call_qwen(question: str, packet: dict[str, Any]) -> dict[str, Any]:
     if clarification:
         cfg = provider_config()
         return {"answer": clarification, "provider": "scope-resolver", "model": cfg["model"]}
-    blocked_answer = blocked_evidence_answer(packet)
-    if blocked_answer:
-        cfg = provider_config()
-        return {"answer": blocked_answer, "provider": "evidence-gate", "model": cfg["model"]}
     cfg = provider_config()
     api_key = cfg["api_key"]
     base_url = cfg["base_url"]

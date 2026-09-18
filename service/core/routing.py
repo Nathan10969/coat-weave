@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from answering import build_provider_body, extract_provider_text, provider_config, provider_headers, provider_messages_url
+from kg_contract import load_tool_contract, normalize_filter_request, openai_tool_parameters
 from demo_config import (
     KG_HYBRID_DEFAULT_CANDIDATE_K,
     KG_HYBRID_DEFAULT_TOP_K,
@@ -58,6 +59,7 @@ def resolve_scope(question: str, recent_turns: list[dict[str, Any]], current_sco
     explicit_doc_ids = extract_doc_ids(question)
     active = state.get("active_doc_scope")
     history = state.get("scope_history", [])
+    last_scope_event = state.get("last_scope_event") if isinstance(state.get("last_scope_event"), dict) else {}
     source_turn_id = latest_user_turn_id(recent_turns)
 
     if has_any(question, GLOBAL_SCOPE_TERMS) and not explicit_doc_ids:
@@ -70,7 +72,7 @@ def resolve_scope(question: str, recent_turns: list[dict[str, Any]], current_sco
         remember_scope_resolution(state, resolution)
         return resolution
 
-    if has_any(question, PREVIOUS_SCOPE_TERMS) and history:
+    if has_any(question, PREVIOUS_SCOPE_TERMS) and history and not last_scope_event:
         doc_ids = normalize_string_list(history[0].get("doc_ids"))
         resolution = make_scope_resolution("use_history", doc_ids=doc_ids, reason="user explicitly referred to previous patent")
         remember_scope_resolution(state, resolution)
@@ -89,7 +91,11 @@ def resolve_scope(question: str, recent_turns: list[dict[str, Any]], current_sco
         remember_scope_resolution(state, resolution)
         return resolution
 
-    recovered_doc_ids = recent_doc_ids_for_doc_followup(question, recent_turns)
+    recovered_doc_ids = (
+        recent_doc_ids_for_doc_followup(question, recent_turns)
+        if not active and not last_scope_event
+        else []
+    )
     if recovered_doc_ids:
         if active and normalize_string_list(active.get("doc_ids")) != recovered_doc_ids:
             history = [{**active, "status": "superseded", "superseded_at": now_iso()}, *history]
@@ -167,8 +173,14 @@ def apply_scope_to_route(route: dict[str, Any], scope_resolution: dict[str, Any]
             if scope_applies_to_kg_search(scope_resolution):
                 filters["doc_ids"] = normalize_string_list(scope_resolution.get("doc_ids"))
                 updated["scope_policy"] = scope_resolution.get("scope_policy", "hard")
+                updated["route_adjustments"] = list(
+                    dict.fromkeys([*(updated.get("route_adjustments") or []), "hard_doc_scope_injected"])
+                )
             elif scope_resolution.get("scope_action") == "clear_global":
                 filters["doc_ids"] = []
+                updated["route_adjustments"] = list(
+                    dict.fromkeys([*(updated.get("route_adjustments") or []), "doc_scope_cleared_by_event"])
+                )
             updated["filters"] = filters
         elif updated.get("tool") == "kg.doc_field_scan":
             if scope_applies_to_kg_search(scope_resolution):
@@ -201,6 +213,7 @@ def clarify_scope_route(question: str, scope_resolution: dict[str, Any]) -> dict
     }
 
 def scoped_kg_search_route(question: str, scope_resolution: dict[str, Any]) -> dict[str, Any]:
+    explicit_doc_ids = extract_doc_ids(question)
     route = {
         "router": "scope_guard_fallback",
         "needs_tools": True,
@@ -210,7 +223,7 @@ def scoped_kg_search_route(question: str, scope_resolution: dict[str, Any]) -> d
                 "query": build_kg_search_query(question),
                 "top_k": KG_HYBRID_DEFAULT_TOP_K,
                 "candidate_k": KG_HYBRID_DEFAULT_CANDIDATE_K,
-                "filters": kg_search_filters_for_question(question),
+                "filters": normalize_kg_search_filters({"doc_ids": explicit_doc_ids}),
                 "expand_top_k": kg_expand_top_k_for_question(question),
                 "reason": "active document scope requires scoped KG search",
             }
@@ -1257,23 +1270,10 @@ def kg_expand_top_k_for_question(question: str) -> int:
         return 30
     return 30
 
-AGGREGATE_INTENTS = {"distinct_count", "list_distinct", "group_count", "numeric_distribution"}
-
-AGGREGATE_TARGETS = {
-    "test_method",
-    "property",
-    "material",
-    "material_role",
-    "resin_system",
-    "substrate",
-    "assignee",
-    "doc_id",
-    "example_kind",
-    "polarity",
-    "amount",
-    "application_family",
-    "formulation",
-}
+KG_TOOL_CONTRACT = load_tool_contract()
+AGGREGATE_INTENTS = set(KG_TOOL_CONTRACT["aggregate"]["intents"])
+AGGREGATE_TARGETS = set(KG_TOOL_CONTRACT["aggregate"]["targets"])
+AGGREGATE_GROUP_BY = set(KG_TOOL_CONTRACT["aggregate"]["group_by"])
 
 # Every entry below also appears in scope_state.GLOBAL_SCOPE_TERMS (head of the
 # list). Kept as a separate, deliberately narrower subset: GLOBAL_SCOPE_TERMS
@@ -2176,12 +2176,7 @@ def wants_coating_kg_search(question: str) -> bool:
     search_intents += ["哪里", "提到", "应用", "测试", "方法", "证据", "统计", "多少", "对比", "讲解", "解读", "介绍", "具体", "给一篇"]
     return domain_hits >= 1 and any(term in lower or term in question for term in search_intents)
 
-ROUTER_TOOL_NAMES = frozenset({
-    "kg.hybrid_search",
-    "kg.sql_aggregate",
-    "kg.doc_field_scan",
-    "kg.expand_hyperedge_multihop",
-})
+ROUTER_TOOL_NAMES = frozenset(KG_TOOL_CONTRACT["tools"])
 
 def extract_json_object(text: str) -> dict[str, Any]:
     cleaned = text.strip()
@@ -2226,51 +2221,57 @@ def sanitize_tool_routing(raw: dict[str, Any], question: str, *, router: str) ->
             cleaned_call["max_context_facts"] = int_or_default(call.get("max_context_facts"), 20)
             cleaned_call["max_evidence_per_item"] = int_or_default(call.get("max_evidence_per_item"), 5)
         elif tool == "kg.hybrid_search":
-            # Keep independent sub-queries independent. The full user question is
-            # applied to structured filters below; injecting it into every text
-            # query collapses formulation and performance searches into duplicates.
             cleaned_call["query"] = build_kg_search_query(query)[:500]
-            # Keep the candidate/verification window stable across LLM tool calls.
-            cleaned_call["top_k"] = KG_HYBRID_DEFAULT_TOP_K
-            cleaned_call["candidate_k"] = KG_HYBRID_DEFAULT_CANDIDATE_K
+            cleaned_call["top_k"] = clamp_int(call.get("top_k"), KG_HYBRID_DEFAULT_TOP_K, 1, 50)
+            cleaned_call["candidate_k"] = clamp_int(
+                call.get("candidate_k"), KG_HYBRID_DEFAULT_CANDIDATE_K, cleaned_call["top_k"], 500
+            )
             cleaned_call["offset"] = clamp_int(
                 call.get("offset"),
                 0,
                 0,
-                KG_HYBRID_DEFAULT_CANDIDATE_K,
+                cleaned_call["candidate_k"],
             )
-            cleaned_call["filters"] = kg_search_filters_for_question(question, call.get("filters"))
-            cleaned_call["expand_top_k"] = kg_expand_top_k_for_question(question)
+            receipt = normalize_filter_request(tool, call.get("filters"))
+            cleaned_call["filters"] = receipt["effective_filters"]
+            cleaned_call["requested_filters"] = receipt["requested_filters"]
+            cleaned_call["unsupported_constraints"] = receipt["unsupported_constraints"]
+            cleaned_call["route_adjustments"] = receipt["route_adjustments"]
+            cleaned_call["expand_top_k"] = clamp_int(call.get("expand_top_k"), 30, 0, 30)
         elif tool == "kg.doc_field_scan":
             cleaned_call["doc_ids"] = normalize_string_list(call.get("doc_ids"))[:5]
-            cleaned_call["field_groups"] = normalize_string_list(call.get("field_groups")) or DOC_FIELD_SCAN_GROUPS
+            allowed_groups = set(KG_TOOL_CONTRACT["tools"][tool]["allowed_groups"])
+            requested_groups = normalize_string_list(call.get("field_groups"))
+            cleaned_call["field_groups"] = [group for group in requested_groups if group in allowed_groups]
+            if not cleaned_call["field_groups"]:
+                cleaned_call["field_groups"] = list(KG_TOOL_CONTRACT["tools"][tool]["default_groups"])
             cleaned_call["limit"] = clamp_int(call.get("limit"), 200, 1, 500)
             cleaned_call["include_evidence"] = bool(call.get("include_evidence", True))
         elif tool == "kg.sql_aggregate":
-            intent = str(call.get("intent") or infer_aggregate_intent(question)).strip()
-            target = str(call.get("target") or infer_aggregate_target(question)).strip()
+            intent = str(call.get("intent") or "").strip()
+            target = str(call.get("target") or "").strip()
             if intent not in AGGREGATE_INTENTS:
-                intent = infer_aggregate_intent(question)
+                continue
             if target not in AGGREGATE_TARGETS:
-                target = infer_aggregate_target(question)
+                continue
             if intent == "numeric_distribution":
                 target = "amount"
             cleaned_call["intent"] = intent
             cleaned_call["target"] = target
-            cleaned_call["filters"] = merge_aggregate_domain_filters(question, call.get("filters"))
-            vocab_warnings = validate_aggregate_filter_vocab(cleaned_call["filters"])
-            if vocab_warnings:
-                cleaned_call["warnings"] = vocab_warnings
+            receipt = normalize_filter_request(tool, call.get("filters"))
+            cleaned_call["filters"] = receipt["effective_filters"]
+            cleaned_call["requested_filters"] = receipt["requested_filters"]
+            cleaned_call["unsupported_constraints"] = receipt["unsupported_constraints"]
+            cleaned_call["route_adjustments"] = receipt["route_adjustments"]
             group_by = normalize_string_list(call.get("group_by"))
-            cleaned_call["group_by"] = [value for value in group_by if value in AGGREGATE_TARGETS][:3]
-            if not cleaned_call["group_by"]:
-                cleaned_call["group_by"] = aggregate_group_by_for_question(question, target, intent)
+            cleaned_call["group_by"] = [value for value in group_by if value in AGGREGATE_GROUP_BY][:3]
+            invalid_groups = [value for value in group_by if value not in AGGREGATE_GROUP_BY]
+            if invalid_groups:
+                cleaned_call["unsupported_constraints"] = sorted(
+                    set(cleaned_call["unsupported_constraints"] + invalid_groups)
+                )
             cleaned_call["limit"] = clamp_int(call.get("limit"), 50, 1, 200)
-            # distinct_count only needs the number; examples are a truncated
-            # sample that tempts the answer LLM into pseudo-aggregations
-            # (2026-06-12: "高频/中频" assignee tiers extrapolated from top-50).
-            # All other intents keep examples — their answers cite items.
-            cleaned_call["include_examples"] = intent != "distinct_count"
+            cleaned_call["include_examples"] = bool(call.get("include_examples", intent != "distinct_count"))
         calls.append(cleaned_call)
     inherited_assignees: list[str] = []
     for call in calls:
@@ -2331,26 +2332,18 @@ def fallback_tool_routing(question: str, *, reason: str = "keyword fallback") ->
             "confidence": 0.9,
             "answer_directly_reason": "",
         }
-    if wants_kg_aggregate(question):
-        calls.append(build_aggregate_call(question))
-        return {
-            "router": "fallback_keywords",
-            "needs_tools": True,
-            "calls": calls[:3],
-            "plan_type": infer_plan_type(calls[:3]),
-            "confidence": 0.75,
-            "answer_directly_reason": "",
-        }
-    if not object_ids and wants_coating_kg_search(question):
+    if wants_coating_kg_search(question):
+        explicit_doc_ids = extract_doc_ids(question)
+        filters = normalize_kg_search_filters({"doc_ids": explicit_doc_ids})
         calls.append(
             {
                 "tool": "kg.hybrid_search",
-                "query": build_kg_search_query(question),
+                "query": question,
                 "top_k": KG_HYBRID_DEFAULT_TOP_K,
                 "candidate_k": KG_HYBRID_DEFAULT_CANDIDATE_K,
-                "filters": kg_search_filters_for_question(question),
-                "expand_top_k": kg_expand_top_k_for_question(question),
-                "reason": "coating KG natural-language search fallback",
+                "filters": filters,
+                "expand_top_k": 30,
+                "reason": "emergency coating KG search using the original question",
             }
         )
     return {
@@ -2374,190 +2367,38 @@ _OPENAI_TOOL_NAME_TO_INTERNAL = {
 
 def _kg_tools_openai_format() -> list[dict[str, Any]]:
     """OpenAI/DeepSeek tools schema for the KG router (function calling)."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "kg_hybrid_search",
-                "description": (
-                    "Coating KG natural-language search. Use for any coating-domain question "
-                    "(materials, substrates, properties, test methods, examples, patents, "
-                    "performance, evidence) when no explicit hyperedge object_id is given. "
-                    "Returns ranked hyperedge object_ids. For Chinese questions include useful "
-                    "English coating terms in the query. ALWAYS also set structured filters "
-                    "when the user specifies a substrate, application, material role, property, "
-                    "or assignee — empty filters means 'all of the KG'."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "natural-language coating KG search query (mix Chinese + English coating terms)",
-                        },
-                        "top_k": {
-                            "type": "integer",
-                            "description": f"number of top hits to return (default {KG_HYBRID_DEFAULT_TOP_K})",
-                        },
-                        "offset": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "candidate-pool page offset; reuse pagination.next_offset for more results",
-                        },
-                        "expand_top_k": {
-                            "type": "integer",
-                            "description": "expand evidence for this many top hits (30 if user wants an answer with evidence, 0 if user only wants IDs)",
-                        },
-                        "filters": {
-                            "type": "object",
-                            "description": (
-                                "Structured filters that narrow retrieval. Fill any that the user "
-                                "mentioned, e.g. user says '碳纤维基底' → substrates=['carbon fiber']; "
-                                "'船舶/海洋' → application_family=['marine']; '富锌底漆' → "
-                                "material_roles must use controlled roles such as ['resin'], ['pigment'], or ['filler']."
-                            ),
-                            "properties": {
-                                "doc_ids": {"type": "array", "items": {"type": "string"}, "description": "specific patent doc_ids to restrict to"},
-                                "substrates": {"type": "array", "items": {"type": "string"}, "description": "substrate / base material. Include likely spaced/unspaced, US/UK, and common word-order variants when applicable, e.g. ['cement fiber board','cement fiberboard','cement fibre board','cement fibreboard','fiber cement board','fiber cementboard','fibre cement board','fibre cementboard'] or ['carbon fiber','carbon fibre']"},
-                                "application_family": application_family_schema_property(),
-                                "material_roles": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string",
-                                        "enum": ["resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"],
-                                    },
-                                    "description": "controlled material roles only; coating-system words such as epoxy or zinc-rich primer are invalid",
-                                },
-                                "properties": {"type": "array", "items": {"type": "string"}, "description": "performance properties, e.g. ['corrosion_protection'], ['adhesion']"},
-                                "test_methods": {"type": "array", "items": {"type": "string"}, "description": "test methods, e.g. ['salt spray'], ['ASTM B117']"},
-                                "test_standards": {"type": "array", "items": {"type": "string"}, "description": "test standards, e.g. ['ISO 12944']"},
-                                "assignees": {"type": "array", "items": {"type": "string"}, "description": "patent assignee / company, e.g. ['Jotun']"},
-                            },
-                        },
-                    },
-                    "required": ["query"],
+    descriptions = {
+        "kg.hybrid_search": (
+            "Coating KG natural-language search for materials, substrates, properties, tests, "
+            "examples, patents, performance, and evidence. Preserve every user constraint in filters. "
+            "For material names, include useful Chinese and English aliases in materials."
+        ),
+        "kg.sql_aggregate": (
+            "Statistical Coating KG aggregation for counts, distinct lists, grouping, and numeric "
+            "distributions. Patent counts use target=doc_id; formulation counts use target=formulation. "
+            "Preserve every user constraint in filters."
+        ),
+        "kg.doc_field_scan": (
+            "Scan structured fields inside one or more explicit patent documents for formulations, "
+            "tests, materials, results, and evidence."
+        ),
+        "kg.expand_hyperedge_multihop": (
+            "Expand explicit hyperedge object IDs returned by retrieval into facts and evidence."
+        ),
+    }
+    tools: list[dict[str, Any]] = []
+    for public_name, internal_name in _OPENAI_TOOL_NAME_TO_INTERNAL.items():
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": public_name,
+                    "description": descriptions[internal_name],
+                    "parameters": openai_tool_parameters(internal_name),
                 },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "kg_sql_aggregate",
-                "description": (
-                    "Statistical Coating KG aggregation. Use for 'how many', 'list all', 'count', "
-                    "'distinct', 'grouped by', or numeric distribution questions. ALWAYS fill "
-                    "structured filters when the user constrains by substrate, application, "
-                    "property, material role, or assignee — empty filters counts the whole KG. "
-                    "COUNTING UNIT decides target: '多少片 / 几篇 / 多少篇 / 多少专利 / how many patents' "
-                    "counts patents → target='doc_id'; '多少配方 / 多少个 / 多少种 / how many formulations' "
-                    "counts formulations → target='formulation'. Do not answer a patent-count question "
-                    "with a formulation count. "
-                    "Examples: '有多少以碳纤维为基底的配方' → target='formulation', "
-                    "filters.substrates=['carbon fiber','carbon fibre']. Include spaced/unspaced variants for substrate names, "
-                    "for example ['cement fiber board','cement fiberboard','cement fibre board','cement fibreboard',"
-                    "'fiber cement board','fiber cementboard','fibre cement board','fibre cementboard']. "
-                    "'多少片船舶防腐专利' → target='doc_id', filters.application_family=['marine']. "
-                    "'多少船舶防腐配方' → target='formulation', filters.application_family=['marine']."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "intent": {
-                            "type": "string",
-                            "enum": ["distinct_count", "list_distinct", "group_count", "numeric_distribution"],
-                        },
-                        "target": {
-                            "type": "string",
-                            "enum": [
-                                "test_method", "property", "material", "material_role",
-                                "resin_system", "substrate", "assignee", "doc_id",
-                                "example_kind", "polarity", "amount", "application_family", "formulation",
-                            ],
-                        },
-                        "group_by": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "fields to group by (usually empty for distinct_count)",
-                        },
-                        "filters": {
-                            "type": "object",
-                            "description": (
-                                "Structured filters that narrow the aggregation. Fill any that "
-                                "the user mentioned. Without filters this counts the entire KG."
-                            ),
-                            "properties": {
-                                "doc_ids": {"type": "array", "items": {"type": "string"}, "description": "specific patent doc_ids"},
-                                "substrates": {"type": "array", "items": {"type": "string"}, "description": "substrate / base material. Include likely spaced/unspaced, US/UK, and common word-order variants when applicable, e.g. ['cement fiber board','cement fiberboard','cement fibre board','cement fibreboard','fiber cement board','fiber cementboard','fibre cement board','fibre cementboard'] or ['carbon fiber','carbon fibre']"},
-                                "application_family": application_family_schema_property(),
-                                "material_roles": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string",
-                                        "enum": ["resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"],
-                                    },
-                                    "description": "controlled material role",
-                                },
-                                "properties": {"type": "array", "items": {"type": "string"}, "description": "performance property, e.g. ['corrosion_protection']"},
-                                "test_methods": {"type": "array", "items": {"type": "string"}, "description": "test method"},
-                                "test_standards": {"type": "array", "items": {"type": "string"}, "description": "test standard, e.g. ['ISO 12944'], ['ASTM B117']"},
-                                "assignees": {"type": "array", "items": {"type": "string"}, "description": "patent assignee / company"},
-                            },
-                        },
-                    },
-                    "required": ["intent", "target"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "kg_doc_field_scan",
-                "description": (
-                    "Doc-scoped Coating KG field scan. Use when a single patent is in scope and "
-                    "the user asks for facts, protocols, test conditions, formulations, layers, "
-                    "panels, materials, results, or evidence inside that patent."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "doc_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "list of patent doc_ids to scan (usually the active scope doc_ids)",
-                        },
-                        "query": {
-                            "type": "string",
-                            "description": "the user's question, used for field-relevance scoring",
-                        },
-                    },
-                    "required": ["doc_ids", "query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "kg_expand_hyperedge_multihop",
-                "description": (
-                    "Expand explicit hyperedge object_ids into full evidence. Use ONLY when the "
-                    "user gives explicit IDs like 'HE_351_WO2019126498A1_0001' or 'DOC::HYP_...', "
-                    "or when prior KG retrieval already returned object_ids. Do not use for "
-                    "natural-language KG search — use kg_hybrid_search instead."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "object_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "hyperedge object_id strings",
-                        },
-                    },
-                    "required": ["object_ids"],
-                },
-            },
-        },
-    ]
+            }
+        )
+    return tools
 
 
 def _router_system_prompt() -> str:
@@ -2688,7 +2529,7 @@ def route_tools_with_qwen(
         method="POST",
     )
     started = time.time()
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=max(1, int(cfg.get("stream_read_timeout_seconds") or 60))) as resp:
         response = json.loads(resp.read().decode("utf-8"))
 
     choices = response.get("choices") or []
@@ -2859,8 +2700,6 @@ def _check_keyword_routes(ctx: RouterContext) -> dict[str, Any] | None:
         previous = latest_hybrid_search_observation()
         if previous is not None:
             return pagination_route_from_observation(ctx.question, previous)
-    if should_use_doc_field_scan(ctx.routing_question, ctx.scope_resolution):
-        return doc_field_scan_route(ctx.routing_question, ctx.scope_resolution)
     if ctx.scope_resolution.get("scope_action") in {"set_new", "use_history"} and doc_scope_only_statement(ctx.question):
         return scope_update_route(ctx.question, ctx.scope_resolution)
     if unresolved_doc_local_reference(ctx.question, ctx.scope_resolution):
@@ -2908,8 +2747,6 @@ def _run_llm_with_tools(ctx: RouterContext) -> dict[str, Any]:
         )
         return ctx.fallback | {"router": router_name, "router_error": str(exc)}
 
-    if ctx.contextualized_followup and ctx.fallback.get("calls"):
-        return ctx.fallback | {"router": "fallback_contextual_followup_preferred", "qwen_decision": decision}
     if decision.get("calls"):
         return decision
     if ctx.fallback.get("calls") and decision.get("confidence", 0) < 0.7:
@@ -2922,8 +2759,8 @@ def _safety_net(ctx: RouterContext, route: dict[str, Any]) -> dict[str, Any]:
     clearly wants KG (aggregate intent or doc-scoped question under active
     scope), still hit the KG via the keyword fallback path.
     """
-    if not route.get("calls") and wants_kg_aggregate(ctx.question):
-        route = ctx.fallback | {"router": "fallback_aggregate_after_router_miss"}
+    if not route.get("calls") and wants_coating_kg_search(ctx.question):
+        route = ctx.fallback | {"router": "fallback_hybrid_after_router_miss"}
     if not route.get("calls") and should_force_scoped_kg_search(ctx.question, ctx.scope_resolution):
         return scoped_kg_search_route(ctx.question, ctx.scope_resolution)
     return apply_scope_to_route(route, ctx.scope_resolution)

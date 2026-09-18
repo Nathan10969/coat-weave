@@ -42,7 +42,7 @@ cp .env.example .env
 bash scripts/setup_db.sh
 
 # 4. ingest one patent end-to-end
-python -m coating_kg ingest "G:/coating_1/20260502062406317/pdf/WO2026077939A1.pdf"
+python -m coating_kg ingest "./data/example.pdf"
 ```
 
 For a smoke test that needs **no** DB and **no** API key, run the deterministic-logic unit tests:
