@@ -1,9 +1,10 @@
 {
   "schema": "coatweave.public-source-manifest.v1",
-  "sequence": 5,
-  "source_branch": "snapshot/20260812-123244",
-  "source_tip_sha": "1ee51a4a395ebc5ce5d60d44a66bcd3c29775abe",
-  "source_timestamp": "2026-08-12T12:41:28+08:00",
+  "sequence": 6,
+  "source_branch": "snapshot/20260816",
+  "source_tip_sha": "cafda373d6451fd492f37916eea932654e5e3d5a",
+  "source_timestamp": "2026-08-16T19:55:56+08:00",
+  "cadence": "manual_early_override",
   "maintainer": "Nathan10969",
   "files": [
     {
@@ -13,8 +14,8 @@
     },
     {
       "path": ".gitignore",
-      "bytes": 482,
-      "sha256": "896b19a842e358735574cd3a37e8d695f0a8437578d218e35bc16d653ebf1422"
+      "bytes": 491,
+      "sha256": "ff3d307610c2fdbae651afdfeba64f9185bc00290c882f7c855c9393e7b2cd2e"
     },
     {
       "path": "docs/assets/architecture.svg",
@@ -25,6 +26,11 @@
       "path": "docs/assets/hero.svg",
       "bytes": 2445,
       "sha256": "508426f149c85936d3e1665c6b0951f7f960512a21a9da5ca5caacb1107ab258"
+    },
+    {
+      "path": "embedding/jobs/server_hyperedge_pgvector_job.py",
+      "bytes": 77944,
+      "sha256": "14ea025afd29e1df15870dab0d295561323a3bd3bf84f8ee0263137931a4d869"
     },
     {
       "path": "extracting/.env.example",
@@ -657,14 +663,19 @@
       "sha256": "df4ac3a11c3c63a54a7f8bd4f5e63932cce8c931aa60edd579a5c90a13f52834"
     },
     {
+      "path": "HANDOFF.md",
+      "bytes": 1597,
+      "sha256": "ed6690f3a21a4c1966008a1b64b8878b8a034f08481c2d29c23bf4e22e17cbfe"
+    },
+    {
       "path": "LICENSE",
       "bytes": 1068,
       "sha256": "bb997d5709387223e20d279b32e05f26fbbd767458807ce66d31f72de2aeea75"
     },
     {
       "path": "README.md",
-      "bytes": 3112,
-      "sha256": "816ae6b81dd18c57a92de2914a20f0a73193df83966c980bbc99cda284ec2623"
+      "bytes": 3388,
+      "sha256": "10c87e854dbb758cdf3ff98000852c60090b48a81ea8ad3b23941ef431f098c8"
     },
     {
       "path": "service/api/__init__.py",
@@ -688,8 +699,8 @@
     },
     {
       "path": "service/api/orchestrator.py",
-      "bytes": 36346,
-      "sha256": "6ccf2bc0a041a504a3b3f1f86d35147a2a8b4eda4398129fb9e6463d96cad96c"
+      "bytes": 36553,
+      "sha256": "5b7f196033ae25ec4ff9efd1d525e099195455ba77b637de5644c7e74ab1b414"
     },
     {
       "path": "service/api/schemas.py",
@@ -723,8 +734,8 @@
     },
     {
       "path": "service/core/answering.py",
-      "bytes": 48835,
-      "sha256": "335eee1f52c91ebda34cc729ce1894ac2bb1026a44de7bfb0e3618e3d9b4657d"
+      "bytes": 51677,
+      "sha256": "0d6508170b91bcf6e58f7537afcb83cf5358b2cf1378b992d912b11088f18caa"
     },
     {
       "path": "service/core/app.py",
@@ -748,13 +759,13 @@
     },
     {
       "path": "service/core/graph_store.py",
-      "bytes": 10263,
-      "sha256": "f2382a7bff30bdfeefaac9f2ea7d89fee5d3f045c59f8e21a91904d9a2a68fa8"
+      "bytes": 7252,
+      "sha256": "de29d65cec287efd94bc1370476dd71ced96c9b1985bec6c4a16da6df84c1938"
     },
     {
       "path": "service/core/memory_core.py",
       "bytes": 8379,
-      "sha256": "55fbf4cb8813d48fe6ce4c15a936901c21631197e30804232242a4b5600f3b75"
+      "sha256": "1342c6bbec1e8cf26edaf68bc4c1be264b8a837f3a18138d03698b25b3819870"
     },
     {
       "path": "service/core/routing.py",
@@ -793,13 +804,13 @@
     },
     {
       "path": "service/kg_tools/kg_expand_http_service.py",
-      "bytes": 173362,
-      "sha256": "77920c7f111daedd351be4281a67e5a1f722923e4031ea9eeb066c85e68c3329"
+      "bytes": 175924,
+      "sha256": "3e942554059fb1a093f5646f46d9197a47bc8cde41d393b3bf2ee196f40f1845"
     },
     {
       "path": "service/README.md",
-      "bytes": 2792,
-      "sha256": "41bc3d87f47d2f1403a904e78fb3b7a5edac7d416166067e8c55204483d2dad9"
+      "bytes": 2791,
+      "sha256": "3cff2dfa2393e956d42d087edecb47512cf42e6cdfcb7d4a02eb6d8407c99dfd"
     },
     {
       "path": "service/requirements.txt",
@@ -853,13 +864,18 @@
     },
     {
       "path": "service/systemd/coating-api.service",
-      "bytes": 497,
-      "sha256": "3e3c5d23eb230d1e55f52f5b488ea682b0475594ac52134438c833effb80399e"
+      "bytes": 500,
+      "sha256": "288c572afee3cc0caea3202e8cba7bda8ccb9a6de41f223cd8dec91e6463eb02"
     },
     {
       "path": "service/systemd/coating-kg-tools.service",
-      "bytes": 525,
-      "sha256": "c3f00f40a4fbf7a9c2c29744c8a6a8324cc19f0494e60d253f676420f0688df2"
+      "bytes": 528,
+      "sha256": "e3a486b2bcc77ee15eb7fcd088d4c670fdd339189bd048b9481fb0229c8e60ca"
+    },
+    {
+      "path": "service/tests/test_model_packet_projection.py",
+      "bytes": 10324,
+      "sha256": "c11baed86f0bb5057a34b6b7f9a1a73b814fa1041086ddc2ce05c5262b7ae055"
     },
     {
       "path": "service/tests/test_retrieval_contracts.py",
@@ -870,6 +886,11 @@
       "path": "SNAPSHOT_20260812_123244.md",
       "bytes": 1752,
       "sha256": "e292420e9eb2bbd66395506f256182716d8a828aa6d5eb37061349e8224f73a5"
+    },
+    {
+      "path": "SNAPSHOT_20260816.md",
+      "bytes": 1919,
+      "sha256": "8fb388b59aa4a5a9a941225e79e97a7fc3f16b6496ffd8b7598e84af54ae8e55"
     }
   ]
 }

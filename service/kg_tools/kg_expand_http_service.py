@@ -83,9 +83,79 @@ AGGREGATE_TARGETS = {
     "application_family",
     "formulation",
 }
-MATERIAL_ROLES = ("resin", "curing_agent", "pigments", "fillers", "additives", "solvents", "catalysts")
+MATERIAL_ROLES = (
+    "resin",
+    "resins",
+    "binder",
+    "binders",
+    "curing_agent",
+    "curing_agents",
+    "crosslinker",
+    "crosslinkers",
+    "hardener",
+    "hardeners",
+    "pigment",
+    "pigments",
+    "filler",
+    "fillers",
+    "additive",
+    "additives",
+    "solvent",
+    "solvents",
+    "catalyst",
+    "catalysts",
+    "tackifier",
+    "tackifiers",
+    "plasticizer",
+    "plasticizers",
+    "wax",
+    "waxes",
+    "antioxidant",
+    "antioxidants",
+    "reactive_diluent",
+    "reactive_diluents",
+    "monomer",
+    "monomers",
+    "biocide",
+    "biocides",
+    "photoinitiator",
+    "photoinitiators",
+    "initiator",
+    "initiators",
+    "neutralizer",
+    "neutralizers",
+    "polyol",
+    "polyols",
+    "resin_precursor",
+    "resin_precursors",
+    "material",
+    "materials",
+    "material_roles",
+    "component",
+    "components",
+)
 VALID_MATERIAL_ROLES = frozenset(
-    {"resin", "curing_agent", "pigment", "filler", "additive", "solvent", "catalyst"}
+    {
+        "resin",
+        "curing_agent",
+        "pigment",
+        "filler",
+        "additive",
+        "solvent",
+        "catalyst",
+        "tackifier",
+        "plasticizer",
+        "wax",
+        "antioxidant",
+        "reactive_diluent",
+        "monomer",
+        "biocide",
+        "photoinitiator",
+        "initiator",
+        "neutralizer",
+        "polyol",
+        "resin_precursor",
+    }
 )
 MAX_AGGREGATE_LIMIT = int(os.environ.get("KG_AGGREGATE_MAX_LIMIT", "200"))
 
@@ -174,23 +244,40 @@ def pick(raw: dict[str, Any] | None, *keys: str) -> dict[str, Any]:
 
 def compact_materials(raw_hyperedge: dict[str, Any]) -> list[dict[str, Any]]:
     materials: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
     for role in MATERIAL_ROLES:
         rows = raw_hyperedge.get(role) or []
+        if isinstance(rows, dict):
+            rows = [rows]
         if not isinstance(rows, list):
             continue
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            amount = row.get("amount") if isinstance(row.get("amount"), dict) else {}
-            materials.append(
-                {
-                    "role": role,
-                    "material": row.get("material"),
-                    "canonical_id": row.get("canonical_id"),
-                    "value": amount.get("value"),
-                    "unit": amount.get("unit"),
-                }
+            amount_raw = row.get("amount")
+            amount = amount_raw if isinstance(amount_raw, dict) else {}
+            value = amount.get("value") if amount else amount_raw
+            if value is None:
+                value = row.get("value")
+            unit = amount.get("unit") if amount else row.get("unit")
+            material = (
+                row.get("material")
+                or row.get("source_label")
+                or row.get("name")
+                or row.get("label")
             )
+            normalized_role = normalize_material_role_name(row.get("role") or role)
+            item = {
+                "role": normalized_role,
+                "material": material,
+                "canonical_id": row.get("canonical_id"),
+                "value": value,
+                "unit": unit,
+            }
+            marker = (normalized_role, material, row.get("canonical_id"), value, unit)
+            if marker not in seen:
+                seen.add(marker)
+                materials.append(item)
     return materials
 
 
@@ -1161,7 +1248,11 @@ def material_rows(raw: dict[str, Any], role_filter: set[str] | None = None) -> l
 
 
 MATERIAL_ROLE_ALIASES = {
+    "binder": "resin",
+    "binders": "resin",
     "resins": "resin",
+    "crosslinker": "curing_agent",
+    "crosslinkers": "curing_agent",
     "pigments": "pigment",
     "fillers": "filler",
     "additives": "additive",
@@ -1171,6 +1262,21 @@ MATERIAL_ROLE_ALIASES = {
     "curing_agents": "curing_agent",
     "hardener": "curing_agent",
     "hardeners": "curing_agent",
+    "tackifiers": "tackifier",
+    "plasticizers": "plasticizer",
+    "waxes": "wax",
+    "antioxidants": "antioxidant",
+    "reactive diluent": "reactive_diluent",
+    "reactive diluents": "reactive_diluent",
+    "reactive_diluents": "reactive_diluent",
+    "monomers": "monomer",
+    "biocides": "biocide",
+    "photoinitiators": "photoinitiator",
+    "initiators": "initiator",
+    "neutralizers": "neutralizer",
+    "polyols": "polyol",
+    "resin precursors": "resin_precursor",
+    "resin_precursors": "resin_precursor",
 }
 
 

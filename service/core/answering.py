@@ -388,6 +388,79 @@ def aggregate_count_statements(packet: dict[str, Any]) -> list[str]:
     return statements
 
 
+MODEL_PACKET_CONTEXT_SECTIONS = (
+    "recent_turns",
+    "tool_routing_decisions",
+    "tool_observations",
+    "recent_tool_observations",
+    "active_scope",
+    "scope_history",
+    "last_scope_resolution",
+    "recent_observations",
+    "authoritative_count_statements",
+)
+MODEL_PACKET_MEMORY_SECTIONS = (
+    "project_state",
+    "user_preferences",
+    "workflow_rules",
+    "active_decisions",
+    "known_issues",
+)
+
+
+def _active_only(rows: Any) -> list[dict[str, Any]]:
+    """Fail-closed: a record without an explicit active status never reaches the model."""
+    return [
+        mem
+        for mem in rows or []
+        if isinstance(mem, dict) and mem.get("status") == "active"
+    ]
+
+
+def project_model_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    """Build the LLM-facing packet as a strict allowlist (fail-closed).
+
+    Only explicitly whitelisted sections are copied out of the audit packet;
+    memory sections are rebuilt with records whose status is exactly "active".
+    Sections not listed here (session_summary, stale_or_superseded, any future
+    memory field) never reach the model by construction. The caller's packet
+    object is never mutated — the full packet stays on disk for audit.
+    """
+    model_packet: dict[str, Any] = {}
+    for section in MODEL_PACKET_CONTEXT_SECTIONS:
+        if section in packet:
+            model_packet[section] = copy.deepcopy(packet[section])
+    for section in MODEL_PACKET_MEMORY_SECTIONS:
+        rows = packet.get(section)
+        if isinstance(rows, list):
+            model_packet[section] = _active_only(rows)
+    if isinstance(packet.get("relevant_memories"), list):
+        model_packet["relevant_memories"] = _active_only(packet["relevant_memories"])
+    recall = packet.get("memory_graph_recall")
+    if isinstance(recall, dict):
+        kept_nodes = [
+            node
+            for node in recall.get("matched_nodes") or []
+            if isinstance(node, dict) and "observation" in (node.get("source_kinds") or [])
+        ]
+        kept_names = {str(node.get("name") or "") for node in kept_nodes}
+        kept_paths = [
+            path
+            for path in recall.get("paths") or []
+            if isinstance(path, dict)
+            and "observation" in (path.get("source_kinds") or [])
+            and str(path.get("source_name") or "") in kept_names
+            and str(path.get("target_name") or "") in kept_names
+        ]
+        model_packet["memory_graph_recall"] = {
+            "query": recall.get("query"),
+            "recall_method": recall.get("recall_method"),
+            "matched_nodes": kept_nodes,
+            "paths": kept_paths,
+        }
+    return model_packet
+
+
 def build_model_messages(question: str, packet: dict[str, Any]) -> list[dict[str, str]]:
     system = (
         "你是一个项目对话记忆助手。你会收到 Dialogue Memory Packet 和用户当前问题。"
@@ -655,6 +728,7 @@ ISO 12944相关判断必须结合基材、表面处理、涂层体系、干膜�
     count_statements = aggregate_count_statements(packet)
     if count_statements:
         packet = {**packet, "authoritative_count_statements": count_statements}
+    packet = project_model_packet(packet)
     return [
         {"role": "system", "content": system},
         {
@@ -681,6 +755,7 @@ def scope_clarification_answer(packet: dict[str, Any]) -> str | None:
 
 
 def local_mock_answer(question: str, packet: dict[str, Any]) -> str:
+    packet = project_model_packet(packet)
     clarification = scope_clarification_answer(packet)
     if clarification:
         return clarification

@@ -136,7 +136,9 @@ class LegacyRuntime:
                         setattr(module, key, value)
             sys.modules["app"] = shim
             try:
-                self.memory_core.ensure_seed_data()
+                # Demo-era seed memories are no longer injected on the production path
+                # (Track A, 2026-08-16). memory_core.ensure_seed_data() stays available
+                # for explicit one-time bootstrap if a demo environment needs it.
                 self._ensure_platform_seed_data()
                 yield
             finally:

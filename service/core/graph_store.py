@@ -12,36 +12,12 @@ _MODEL_NAME = provider_config()["model"]
 
 GRAPH_CANONICAL_RULES = [
     {
-        "name": "客户 demo",
-        "type": "project",
-        "aliases": ["客户", "demo", "演示", "本地 demo", "Dialogue Memory Demo"],
-        "relations": [
-            ("depends_on", "单对话框", "design_scope"),
-            ("uses", _MODEL_NAME, "model_provider"),
-            ("uses", "可视化图谱", "visual_surface"),
-            ("uses", "memory graph recall", "retrieval_layer"),
-            ("avoids", "完整 MCP/runtime", "demo_boundary"),
-            ("prefers", "中文解释", "user_preference"),
-        ],
-    },
-    {
         "name": "memory graph recall",
         "type": "concept",
         "aliases": ["图谱召回", "图谱记忆召回", "graph recall", "memory graph"],
         "relations": [
             ("depends_on", "entity/relation extraction", "pipeline_step"),
             ("feeds", "Dialogue Memory Packet", "context_injection"),
-        ],
-    },
-    {
-        "name": "agentmemory轻量骨架",
-        "type": "pattern",
-        "aliases": ["agentmemory", "raw turn", "observation", "durable memory"],
-        "relations": [
-            ("uses", "raw turn", "memory_layer"),
-            ("uses", "observation", "memory_layer"),
-            ("uses", "durable memory", "memory_layer"),
-            ("uses", "Dialogue Memory Packet", "memory_layer"),
         ],
     },
     {
@@ -57,19 +33,10 @@ GRAPH_CANONICAL_RULES = [
 ]
 
 GRAPH_NODE_TYPES = {
-    "客户 demo": "project",
-    "单对话框": "concept",
     _MODEL_NAME: "library",
-    "可视化图谱": "concept",
-    "完整 MCP/runtime": "concept",
-    "中文解释": "preference",
     "memory graph recall": "concept",
     "entity/relation extraction": "concept",
     "Dialogue Memory Packet": "concept",
-    "agentmemory轻量骨架": "pattern",
-    "raw turn": "concept",
-    "observation": "concept",
-    "durable memory": "concept",
     "1M context": "concept",
     "64K output": "concept",
     "thinking": "concept",
@@ -114,38 +81,12 @@ def extract_graph_records(source: dict[str, Any], source_kind: str) -> tuple[lis
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 
-    matched_rule_names: set[str] = set()
     for rule in GRAPH_CANONICAL_RULES:
         if text_matches_rule(text, rule):
-            matched_rule_names.add(rule["name"])
             nodes.append(graph_node(rule["name"], rule["type"], source_id, source_kind))
             for relation, target, reason in rule["relations"]:
                 nodes.append(graph_node(target, GRAPH_NODE_TYPES.get(target), source_id, source_kind))
                 edges.append(graph_edge(rule["name"], relation, target, source_id, source_kind, reason))
-
-    if "客户 demo" in matched_rule_names and "agentmemory轻量骨架" in matched_rule_names:
-        edges.append(graph_edge("客户 demo", "uses", "agentmemory轻量骨架", source_id, source_kind, "borrowed_architecture"))
-
-    if any(w in text for w in ["单对话框", "对话框", "本地浏览器"]):
-        nodes.extend([
-            graph_node("客户 demo", "project", source_id, source_kind),
-            graph_node("单对话框", "concept", source_id, source_kind),
-        ])
-        edges.append(graph_edge("客户 demo", "depends_on", "单对话框", source_id, source_kind, "explicit_demo_scope"))
-
-    if any(w in text for w in ["中文", "中文解释"]):
-        nodes.extend([
-            graph_node("客户 demo", "project", source_id, source_kind),
-            graph_node("中文解释", "preference", source_id, source_kind),
-        ])
-        edges.append(graph_edge("客户 demo", "prefers", "中文解释", source_id, source_kind, "explicit_user_preference"))
-
-    if any(w.lower() in text.lower() for w in ["qwen", "deepseek", "dashscope", provider_config()["model"].lower()]):
-        nodes.extend([
-            graph_node("客户 demo", "project", source_id, source_kind),
-            graph_node(provider_config()["model"], "library", source_id, source_kind),
-        ])
-        edges.append(graph_edge("客户 demo", "uses", provider_config()["model"], source_id, source_kind, "model_provider"))
 
     return nodes, edges
 
@@ -209,10 +150,6 @@ def graph_recall(question: str, limit: int = 10) -> dict[str, Any]:
         score = overlap + exact
         if score > 0:
             scored_nodes.append((score, node))
-    if not scored_nodes and nodes:
-        for node in nodes:
-            if node.get("name") in {"客户 demo", "memory graph recall", provider_config()["model"]}:
-                scored_nodes.append((0.5, node))
     scored_nodes.sort(key=lambda item: item[0], reverse=True)
     selected_nodes = {node["id"]: node for _, node in scored_nodes[:limit]}
     selected_edges: list[dict[str, Any]] = []
@@ -229,6 +166,7 @@ def graph_recall(question: str, limit: int = 10) -> dict[str, Any]:
             "target": edge.get("target_name"),
             "reason": edge.get("reason"),
             "source_ids": edge.get("source_ids", []),
+            "source_kinds": edge.get("source_kinds", []),
         }
         for edge in selected_edges[:limit]
     ]

@@ -1,4 +1,4 @@
-# A100 Coating API Service
+# Coating API Service
 
 This folder is the platform-facing migration of the local dialogue-memory KG demo.
 It intentionally excludes the browser demo `static/` UI. Company frontend code
@@ -13,7 +13,7 @@ The API service owns routing, doc-scope memory, planner orchestration, model
 calls, and compact API responses. The KG tools service owns hybrid search,
 hyperedge multi-hop expansion, and template SQL aggregation.
 
-## Setup On A100
+## Deployment template
 
 ```bash
 cd /opt/coat-weave/service

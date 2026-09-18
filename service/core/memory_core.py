@@ -141,7 +141,7 @@ def maybe_promote_memory(obs: dict[str, Any]) -> dict[str, Any] | None:
 def update_summary(user_text: str, assistant_text: str | None = None) -> dict[str, Any]:
     summary = read_json(SUMMARY, {})
     summary.setdefault("session_id", SESSION_ID)
-    summary.setdefault("goal", "本地对话记忆 demo")
+    summary.setdefault("goal", "涂料专利知识图谱问答")
     summary.setdefault("current_state", "")
     summary.setdefault("decisions", [])
     summary.setdefault("open_questions", [])
@@ -155,7 +155,7 @@ def update_summary(user_text: str, assistant_text: str | None = None) -> dict[st
         if user_text not in summary["open_questions"]:
             summary["open_questions"] = (summary["open_questions"] + [user_text])[-6:]
     if assistant_text:
-        summary["current_state"] = "最近一次回答已基于 Dialogue Memory Packet 生成，并保存了 raw turn 与 observation。"
+        summary["current_state"] = "最近一次回答已基于知识图谱检索与记忆包生成，并保存了对话记录。"
     summary["updated_at"] = now_iso()
     write_json(SUMMARY, summary)
     return summary
