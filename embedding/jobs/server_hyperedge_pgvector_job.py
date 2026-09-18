@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
@@ -61,10 +62,14 @@ class EmbeddingRow:
 
 @dataclass(frozen=True)
 class InputSource:
-    company: str
+    source_id: str
     root: Path
     layout: str
     expected_hyperedges: int
+    expected_docs: int | None = None
+    company: str | None = None
+    id_schema_version: str | None = None
+    assignees_by_doc: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,7 @@ def main() -> int:
     parser.add_argument("--zip", dest="input_path", type=Path)
     parser.add_argument("--input-path", dest="input_path", type=Path)
     parser.add_argument("--source-manifest", type=Path)
+    parser.add_argument("--org-registry", type=Path)
     parser.add_argument("--collection-id")
     parser.add_argument("--company")
     parser.add_argument(
@@ -140,18 +146,24 @@ def main() -> int:
     parser.add_argument("--batch-id", default=None)
     args = parser.parse_args()
 
-    pg = load_pg_env(args.pg_env)
+    pg = {} if args.mode == "preflight" else load_pg_env(args.pg_env)
     if args.mode in {"all", "build", "preflight"}:
         if not args.collection_id:
             parser.error("--collection-id is required for build and preflight modes")
         if args.source_manifest:
-            objects = load_collection_objects(args.source_manifest, args.collection_id, batch_id=args.batch_id)
+            objects = load_collection_objects(
+                args.source_manifest,
+                args.collection_id,
+                batch_id=args.batch_id,
+                org_registry_path=args.org_registry,
+            )
         elif args.input_path and args.company:
             source = InputSource(
-                company=args.company,
+                source_id=args.company,
                 root=args.input_path,
                 layout="auto",
                 expected_hyperedges=-1,
+                company=args.company,
             )
             objects = load_collection_objects_from_sources((source,), args.collection_id, batch_id=args.batch_id)
         else:
@@ -239,11 +251,109 @@ def ensure_schema(conn) -> None:
     conn.commit()
 
 
+ASSIGNEE_KEYS = ("current_assignees", "current_assignee", "assignee", "applicants", "applicant")
+
+
+def normalize_org_alias(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    chars = [
+        " " if char.isspace() else char
+        for char in normalized
+        if not unicodedata.category(char).startswith("P")
+    ]
+    return re.sub(r"\s+", " ", "".join(chars)).strip()
+
+
+def load_org_alias_map(path: Path) -> dict[str, tuple[str, str]]:
+    latest: dict[str, Mapping[str, Any]] = {}
+    for row in read_jsonl_path(path):
+        if row.get("schema_version") != "org_registry_v1":
+            raise ValueError(f"org registry schema_version mismatch: {path}")
+        canonical_id = text_value(row.get("canonical_id"))
+        if not canonical_id:
+            raise ValueError(f"org registry row missing canonical_id: {path}")
+        if int(row.get("record_version", 0)) >= int(latest.get(canonical_id, {}).get("record_version", -1)):
+            latest[canonical_id] = row
+    aliases: dict[str, tuple[str, str]] = {}
+    for canonical_id, row in sorted(latest.items()):
+        if row.get("status") != "active":
+            continue
+        canonical_name = text_value(row.get("canonical_name")) or canonical_id
+        for item in row.get("aliases") or []:
+            alias = item.get("text") if isinstance(item, Mapping) else item
+            alias_text = text_value(alias)
+            if not alias_text:
+                continue
+            key = normalize_org_alias(alias_text)
+            existing = aliases.get(key)
+            if existing and existing[0] != canonical_id:
+                raise ValueError(f"active org alias conflict: {alias_text!r}")
+            aliases[key] = (canonical_id, canonical_name)
+    return aliases
+
+
+def authoritative_assignees(row: Mapping[str, Any]) -> list[str]:
+    for key in ASSIGNEE_KEYS:
+        value = row.get(key)
+        if value is None or value == "" or value == []:
+            continue
+        items = value if isinstance(value, list) else [value]
+        return [str(item).strip() for item in items if str(item).strip()]
+    return []
+
+
+def load_source_patents(root: Path, layout: str) -> dict[str, dict[str, Any]]:
+    if layout == "aggregate":
+        paths = [root / "patents.jsonl"]
+    else:
+        paths = sorted(root.glob("patents/*/kg_pack/patents.jsonl"))
+    if not paths or any(not path.is_file() for path in paths):
+        raise FileNotFoundError(f"patents.jsonl not found below source root: {root}")
+    patents: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        for row in read_jsonl_path(path):
+            doc_id = text_value(row.get("doc_id") or row.get("patent_id") or row.get("publication_number"))
+            if not doc_id:
+                raise ValueError(f"patent row missing document id: {path}")
+            if doc_id in patents:
+                raise ValueError(f"duplicate patent document id {doc_id}: {path}")
+            patents[doc_id] = row
+    return patents
+
+
+def resolve_source_assignees(
+    root: Path,
+    layout: str,
+    aliases: Mapping[str, tuple[str, str]],
+    expected_assignee_ids: set[str],
+) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
+    resolved: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+    for doc_id, patent in load_source_patents(root, layout).items():
+        raw_values = authoritative_assignees(patent)
+        if not raw_values:
+            continue
+        ids: list[str] = []
+        names: list[str] = []
+        for raw_value in raw_values:
+            hit = aliases.get(normalize_org_alias(raw_value))
+            if hit is None:
+                ids = []
+                names = []
+                break
+            if hit[0] not in ids:
+                ids.append(hit[0])
+                names.append(hit[1])
+        if ids and not set(ids).isdisjoint(expected_assignee_ids):
+            resolved[doc_id] = (tuple(ids), tuple(names))
+    return resolved
+
+
 def load_collection_objects(
     manifest_path: Path,
     collection_id: str,
     *,
     batch_id: str | None = None,
+    org_registry_path: Path | None = None,
 ) -> list[RetrievalObject]:
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(data, Mapping):
@@ -253,6 +363,22 @@ def load_collection_objects(
         raise ValueError(
             f"collection mismatch: argument={collection_id!r}, manifest={declared_collection!r}"
         )
+    schema_version = str(data.get("schema_version") or "hyperedge_collection_sources_v1")
+    if schema_version not in {"hyperedge_collection_sources_v1", "hyperedge_collection_sources_v2"}:
+        raise ValueError(f"unsupported source manifest schema_version: {schema_version!r}")
+    is_v2 = schema_version == "hyperedge_collection_sources_v2"
+    collection_kind = str(data.get("collection_kind") or "").strip() if is_v2 else ""
+    expected_assignee_ids = {
+        str(value).strip() for value in data.get("expected_assignee_ids") or [] if str(value).strip()
+    }
+    if is_v2 and collection_kind not in {"assignee", "topic"}:
+        raise ValueError("v2 source manifest collection_kind must be assignee or topic")
+    if is_v2 and collection_kind == "assignee" and not expected_assignee_ids:
+        raise ValueError("v2 assignee collection requires expected_assignee_ids")
+    if is_v2 and collection_kind == "assignee" and org_registry_path is None:
+        raise ValueError("--org-registry is required for a v2 assignee collection")
+    alias_map = load_org_alias_map(org_registry_path) if org_registry_path else {}
+
     source_rows = data.get("sources")
     if not isinstance(source_rows, list) or not source_rows:
         raise ValueError(f"source manifest must contain a non-empty sources list: {manifest_path}")
@@ -260,21 +386,44 @@ def load_collection_objects(
     for item in source_rows:
         if not isinstance(item, Mapping):
             raise ValueError(f"invalid source manifest entry: {item!r}")
-        company = str(item.get("company") or "").strip()
+        company = str(item.get("company") or "").strip() or None
+        source_id = str(item.get("source_id") or company or "").strip()
         root_value = str(item.get("root") or "").strip()
         layout = str(item.get("layout") or "").strip()
         expected = item.get("expected_hyperedges")
-        if not company or not root_value or layout not in {"aggregate", "patent_packs"}:
+        expected_docs = item.get("expected_docs")
+        if not source_id or not root_value or layout not in {"aggregate", "patent_packs"}:
             raise ValueError(f"invalid source manifest entry: {item!r}")
+        if is_v2 and company:
+            raise ValueError(f"v2 source manifest must not stamp company: {item!r}")
+        if not is_v2 and not company:
+            raise ValueError(f"v1 source manifest requires company: {item!r}")
         if not isinstance(expected, int) or expected < 0:
             raise ValueError(f"expected_hyperedges must be a non-negative integer: {item!r}")
-        _validate_id_segment("company", company)
+        if expected_docs is not None and (not isinstance(expected_docs, int) or expected_docs < 0):
+            raise ValueError(f"expected_docs must be a non-negative integer: {item!r}")
+        _validate_id_segment("source_id", source_id)
+        if company:
+            _validate_id_segment("company", company)
+        root = Path(root_value)
+        assignees_by_doc = None
+        if is_v2 and collection_kind == "assignee":
+            assignees_by_doc = resolve_source_assignees(
+                root,
+                layout,
+                alias_map,
+                expected_assignee_ids,
+            )
         sources.append(
             InputSource(
-                company=company,
-                root=Path(root_value),
+                source_id=source_id,
+                root=root,
                 layout=layout,
                 expected_hyperedges=expected,
+                expected_docs=expected_docs,
+                company=company,
+                id_schema_version="retrieval_object_v2" if is_v2 else None,
+                assignees_by_doc=assignees_by_doc,
             )
         )
     _validate_id_segment("collection_id", collection_id)
@@ -288,26 +437,44 @@ def load_collection_objects_from_sources(
     batch_id: str | None = None,
 ) -> list[RetrievalObject]:
     objects: list[RetrievalObject] = []
-    company_counts: Counter[str] = Counter()
+    source_counts: Counter[str] = Counter()
     for source in sources:
         if not source.root.is_dir():
             raise FileNotFoundError(f"source root does not exist: {source.root}")
+        source_docs: set[str] = set()
         for doc_id, row in iter_source_hyperedges(source):
+            source_docs.add(doc_id)
+            assignee_ids: tuple[str, ...] = ()
+            assignee_names: tuple[str, ...] = ()
+            if source.id_schema_version == "retrieval_object_v2" and source.assignees_by_doc is not None:
+                resolution = source.assignees_by_doc.get(doc_id)
+                if resolution is None:
+                    raise ValueError(f"unresolved or out-of-scope assignee for {source.source_id} document {doc_id}")
+                assignee_ids, assignee_names = resolution
             obj = hyperedge_object(
                 doc_id,
                 row,
                 batch_id=batch_id or collection_id,
                 collection_id=collection_id,
                 company=source.company,
+                source_id=source.source_id,
+                id_schema_version=source.id_schema_version,
+                assignee_ids=assignee_ids,
+                assignee_names=assignee_names,
             )
             if obj is None:
-                raise ValueError(f"missing hyperedge_id in {source.company} source for document {doc_id}")
+                raise ValueError(f"missing hyperedge_id in {source.source_id} source for document {doc_id}")
             objects.append(obj)
-            company_counts[source.company] += 1
-        if source.expected_hyperedges >= 0 and company_counts[source.company] != source.expected_hyperedges:
+            source_counts[source.source_id] += 1
+        if source.expected_hyperedges >= 0 and source_counts[source.source_id] != source.expected_hyperedges:
             raise ValueError(
-                f"source count mismatch for {source.company}: "
-                f"expected={source.expected_hyperedges}, actual={company_counts[source.company]}"
+                f"source count mismatch for {source.source_id}: "
+                f"expected={source.expected_hyperedges}, actual={source_counts[source.source_id]}"
+            )
+        if source.expected_docs is not None and len(source_docs) != source.expected_docs:
+            raise ValueError(
+                f"source document count mismatch for {source.source_id}: "
+                f"expected={source.expected_docs}, actual={len(source_docs)}"
             )
     deduped = dedupe(objects)
     if len(deduped) != len(objects):
@@ -347,7 +514,17 @@ def iter_source_hyperedges(source: InputSource) -> Iterable[tuple[str, dict[str,
 def preflight_objects(objects: Sequence[RetrievalObject], collection_id: str) -> None:
     if not objects:
         raise RuntimeError("No hyperedge objects loaded during preflight")
-    companies = Counter(str(obj.metadata.get("company") or "") for obj in objects)
+    companies = Counter(
+        company
+        for obj in objects
+        if (company := str(obj.metadata.get("company") or ""))
+    )
+    id_schemas = Counter(str(obj.metadata.get("id_schema_version") or "legacy") for obj in objects)
+    assignee_ids = Counter(
+        assignee_id
+        for obj in objects
+        for assignee_id in obj.metadata.get("assignee_ids") or []
+    )
     docs = {obj.doc_id for obj in objects}
     print(
         json.dumps(
@@ -357,6 +534,8 @@ def preflight_objects(objects: Sequence[RetrievalObject], collection_id: str) ->
                 "objects": len(objects),
                 "documents": len(docs),
                 "companies": dict(sorted(companies.items())),
+                "id_schema_versions": dict(sorted(id_schemas.items())),
+                "assignee_ids": dict(sorted(assignee_ids.items())),
                 "sample_object_id": objects[0].object_id,
             },
             ensure_ascii=False,
@@ -483,6 +662,10 @@ def hyperedge_object(
     object_id_scope: str = "raw",
     collection_id: str | None = None,
     company: str | None = None,
+    source_id: str | None = None,
+    id_schema_version: str | None = None,
+    assignee_ids: Sequence[str] = (),
+    assignee_names: Sequence[str] = (),
 ) -> RetrievalObject | None:
     hyperedge_id = row.get("hyperedge_id")
     if not hyperedge_id:
@@ -490,9 +673,14 @@ def hyperedge_object(
     raw_hyperedge_id = str(hyperedge_id)
     object_id = raw_hyperedge_id
     if collection_id:
-        if not company:
-            raise ValueError("company is required when collection_id is set")
-        object_id = f"{collection_id}::{company}::{doc_id}::{raw_hyperedge_id}"
+        if id_schema_version == "retrieval_object_v2":
+            if company:
+                raise ValueError("company must not be stamped into retrieval_object_v2 ids")
+            object_id = f"{collection_id}::{doc_id}::{raw_hyperedge_id}"
+        else:
+            if not company:
+                raise ValueError("company is required for legacy collection ids")
+            object_id = f"{collection_id}::{company}::{doc_id}::{raw_hyperedge_id}"
     elif object_id_scope == "doc_prefixed":
         object_id = f"{doc_id}::{raw_hyperedge_id}"
     substrate = row.get("substrate") if isinstance(row.get("substrate"), Mapping) else {}
@@ -516,28 +704,40 @@ def hyperedge_object(
         labelled_list("evidence_ids", row.get("evidence_ids")),
         labelled_list("fact_ids", row.get("fact_ids")),
     )
+    metadata = {
+        "source": "hyperedges.jsonl",
+        "batch_id": batch_id,
+        "collection_id": collection_id,
+        "raw_hyperedge_id": raw_hyperedge_id,
+        "hyperedge_type": row.get("hyperedge_type"),
+        "hyperedge_search_template": "baseline_current",
+        "context_id": row.get("context_id"),
+        "sample_id": row.get("sample_id"),
+        "example_id": row.get("example_id"),
+        "example_kind": row.get("example_kind"),
+        "polarity": row.get("polarity"),
+        "property": row.get("property"),
+        "property_canonical_id": row.get("property_canonical_id"),
+        "evidence_ids": row.get("evidence_ids") or [],
+        "fact_ids": row.get("fact_ids") or [],
+    }
+    if id_schema_version == "retrieval_object_v2":
+        metadata.update(
+            {
+                "id_schema_version": id_schema_version,
+                "source_id": source_id,
+                "assignee_ids": list(assignee_ids),
+                "assignee_names": list(assignee_names),
+            }
+        )
+    else:
+        metadata["company"] = company
     return RetrievalObject(
         object_type=OBJECT_TYPE,
         object_id=object_id,
         doc_id=doc_id,
         text_for_embedding=truncate(text, 3200),
-        metadata={
-            "source": "hyperedges.jsonl",
-            "batch_id": batch_id,
-            "collection_id": collection_id,
-            "company": company,
-            "raw_hyperedge_id": raw_hyperedge_id,
-            "hyperedge_search_template": "baseline_current",
-            "context_id": row.get("context_id"),
-            "sample_id": row.get("sample_id"),
-            "example_id": row.get("example_id"),
-            "example_kind": row.get("example_kind"),
-            "polarity": row.get("polarity"),
-            "property": row.get("property"),
-            "property_canonical_id": row.get("property_canonical_id"),
-            "evidence_ids": row.get("evidence_ids") or [],
-            "fact_ids": row.get("fact_ids") or [],
-        },
+        metadata=metadata,
     )
 
 

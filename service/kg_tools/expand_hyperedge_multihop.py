@@ -102,6 +102,7 @@ class KgDirectorySource:
     path: Path
     collection_id: str | None = None
     company: str | None = None
+    id_schema_version: str | None = None
 
 
 def main() -> int:
@@ -314,11 +315,18 @@ def add_row(
 ) -> None:
     if filename == "hyperedges.jsonl":
         raw = dict(row)
-        if source and source.collection_id and source.company:
+        if source and source.collection_id:
             doc_id = doc_id_from(raw, doc_hint)
             hyperedge_id = text_or_none(raw.get("hyperedge_id"))
             if doc_id and hyperedge_id:
-                object_id = f"{source.collection_id}::{source.company}::{doc_id}::{hyperedge_id}"
+                if source.id_schema_version == "retrieval_object_v2":
+                    if source.company:
+                        raise ValueError("retrieval_object_v2 KG source must not include company")
+                    object_id = f"{source.collection_id}::{doc_id}::{hyperedge_id}"
+                elif source.company:
+                    object_id = f"{source.collection_id}::{source.company}::{doc_id}::{hyperedge_id}"
+                else:
+                    raise ValueError("legacy namespaced KG source requires company")
                 existing_object_id = text_or_none(raw.get("object_id"))
                 if existing_object_id and existing_object_id != object_id:
                     raise ValueError(
@@ -452,9 +460,7 @@ def resolve_raw_hyperedge_id(
     if raw:
         return raw
     if "::" in object_id:
-        return object_id.split("::", 1)[1]
-    if doc_id and object_id.startswith(f"{doc_id}::"):
-        return object_id.split("::", 1)[1]
+        return object_id.rsplit("::", 1)[1]
     return object_id
 
 
@@ -469,7 +475,7 @@ def find_raw_hyperedge(
         return None
     candidate_ids = unique_texts(
         raw_hyperedge_id,
-        object_id.split("::", 1)[1] if "::" in object_id else None,
+        object_id.rsplit("::", 1)[1] if "::" in object_id else None,
         metadata.get("raw_hyperedge_id"),
         metadata.get("hyperedge_id"),
         object_id,
@@ -508,7 +514,7 @@ def expand_facts(
     source_ids = unique_texts(
         raw_hyperedge_id,
         raw_hyperedge.get("hyperedge_id") if raw_hyperedge else None,
-        object_id.split("::", 1)[1] if "::" in object_id else None,
+        object_id.rsplit("::", 1)[1] if "::" in object_id else None,
         object_id,
     )
     for source_id in source_ids:

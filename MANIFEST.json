@@ -1,9 +1,9 @@
 {
   "schema": "coatweave.public-source-manifest.v1",
-  "sequence": 6,
-  "source_branch": "snapshot/20260816",
-  "source_tip_sha": "cafda373d6451fd492f37916eea932654e5e3d5a",
-  "source_timestamp": "2026-08-16T19:55:56+08:00",
+  "sequence": 7,
+  "source_branch": "snapshot/20260817",
+  "source_tip_sha": "440609232c51ea3c0cea21ca46cbca9d2b76f3a5",
+  "source_timestamp": "2026-08-17T16:54:31+08:00",
   "cadence": "manual_early_override",
   "maintainer": "Nathan10969",
   "files": [
@@ -29,8 +29,13 @@
     },
     {
       "path": "embedding/jobs/server_hyperedge_pgvector_job.py",
-      "bytes": 77944,
-      "sha256": "14ea025afd29e1df15870dab0d295561323a3bd3bf84f8ee0263137931a4d869"
+      "bytes": 87123,
+      "sha256": "4e2420385a48f896158a410325c9c8f41a052b0ca07c7f1a8bed8630d32a23ba"
+    },
+    {
+      "path": "embedding/jobs/test_server_hyperedge_pgvector_job_v2.py",
+      "bytes": 6997,
+      "sha256": "c42d45df41c7c778d396d4b2de6d085bfe70e7852fd7fb2636a72877e560fc64"
     },
     {
       "path": "extracting/.env.example",
@@ -665,7 +670,7 @@
     {
       "path": "HANDOFF.md",
       "bytes": 1597,
-      "sha256": "ed6690f3a21a4c1966008a1b64b8878b8a034f08481c2d29c23bf4e22e17cbfe"
+      "sha256": "6b07a5034349dfa8a7d40b1a6d30a3060e40d46e905dcc50c163e0daf96511f0"
     },
     {
       "path": "LICENSE",
@@ -674,8 +679,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 3388,
-      "sha256": "10c87e854dbb758cdf3ff98000852c60090b48a81ea8ad3b23941ef431f098c8"
+      "bytes": 2796,
+      "sha256": "b25f817375ec2b51dea5a3d3d037b5de8950bcd645d03595042989a9f65511d7"
     },
     {
       "path": "service/api/__init__.py",
@@ -799,13 +804,13 @@
     },
     {
       "path": "service/kg_tools/expand_hyperedge_multihop.py",
-      "bytes": 22534,
-      "sha256": "c425be86096083ef97060312b1a0c1a091a046298b166aa72b82b0fca10bc2d6"
+      "bytes": 22907,
+      "sha256": "bc6def54b52c62f8f7cb36994a930ff9272e56bdf8d5390aca05efa615a5588e"
     },
     {
       "path": "service/kg_tools/kg_expand_http_service.py",
-      "bytes": 175924,
-      "sha256": "3e942554059fb1a093f5646f46d9197a47bc8cde41d393b3bf2ee196f40f1845"
+      "bytes": 176455,
+      "sha256": "171e17fecf28e7c593ee3de83f754f1ebc10dee1d1baec0eb544b33fa846b886"
     },
     {
       "path": "service/README.md",
@@ -883,6 +888,11 @@
       "sha256": "5814dfbfcbb3b98a825d3402b30eae4a02d9a0961f092ab8b6e444e75dd51972"
     },
     {
+      "path": "service/tests/test_v2_object_ids.py",
+      "bytes": 3104,
+      "sha256": "faf2b916d1c7296482fe56f71826f6a1d96df15f822fff6c8ef53341bf99293f"
+    },
+    {
       "path": "SNAPSHOT_20260812_123244.md",
       "bytes": 1752,
       "sha256": "e292420e9eb2bbd66395506f256182716d8a828aa6d5eb37061349e8224f73a5"
@@ -891,6 +901,11 @@
       "path": "SNAPSHOT_20260816.md",
       "bytes": 1919,
       "sha256": "8fb388b59aa4a5a9a941225e79e97a7fc3f16b6496ffd8b7598e84af54ae8e55"
+    },
+    {
+      "path": "SNAPSHOT_20260817.md",
+      "bytes": 2294,
+      "sha256": "5d67ff5c1cad32eeab4ea12316874930a743eb15dc8778ad8fed9c20242b4d17"
     }
   ]
 }

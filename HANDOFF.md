@@ -1,4 +1,4 @@
-# Snapshot 06 public handoff
+# Snapshot 07 public handoff
 
 This source-only handoff describes the public tree without exposing workstation paths, private hosts, internal repositories, credentials, corpora, indexes, or runtime state.
 
@@ -18,4 +18,4 @@ Publication checks cover static syntax, credential scanning, selected offline te
 
 ## Historical interpretation
 
-This is sequence 06 in a frozen 17-snapshot timeline. Differences from sequence 05 record the source tree at the source revision; they should not be interpreted as a promise that every capability improved monotonically.
+This is sequence 07 in a frozen 17-snapshot timeline. Differences from sequence 06 record the source tree at the source revision; they should not be interpreted as a promise that every capability improved monotonically.

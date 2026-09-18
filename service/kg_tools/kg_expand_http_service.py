@@ -192,11 +192,19 @@ def load_kg_source_manifest(path: Path) -> tuple[expand.KgDirectorySource, ...]:
         source_path = Path(str(item.get("root") or "").strip())
         collection_id = str(item.get("collection_id") or "").strip() or None
         company = str(item.get("company") or "").strip() or None
+        id_schema_version = str(item.get("id_schema_version") or "").strip() or None
         if not source_path.is_dir():
             raise FileNotFoundError(f"KG source root not found: {source_path}")
-        if bool(collection_id) != bool(company):
-            raise ValueError(f"collection_id and company must be supplied together: {item!r}")
-        sources.append(expand.KgDirectorySource(source_path, collection_id, company))
+        if company and not collection_id:
+            raise ValueError(f"company requires collection_id: {item!r}")
+        if id_schema_version == "retrieval_object_v2":
+            if not collection_id or company:
+                raise ValueError(f"v2 KG source requires collection_id and forbids company: {item!r}")
+        elif collection_id and not company:
+            raise ValueError(f"legacy KG source requires collection_id and company: {item!r}")
+        elif id_schema_version:
+            raise ValueError(f"unsupported id_schema_version: {item!r}")
+        sources.append(expand.KgDirectorySource(source_path, collection_id, company, id_schema_version))
     if not sources:
         raise ValueError(f"KG source manifest has no sources: {path}")
     return tuple(sources)
