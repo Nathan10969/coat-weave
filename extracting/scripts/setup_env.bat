@@ -1,8 +1,8 @@
 @echo off
 REM Setup script for coating_kg project (Windows cmd version)
 REM Usage:
-REM   cd /d <repository-root>\extracting
-REM   <repository-root>\extracting> scripts\setup_env.bat
+REM   C:\> cd /d G:\coating_1\coating_kg
+REM   G:\coating_1\coating_kg> scripts\setup_env.bat
 
 setlocal
 

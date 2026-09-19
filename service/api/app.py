@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from .config import CoatingApiSettings
-from .orchestrator import CoatingConversationEngine, compact_tool_calls
+from .orchestrator import CoatingConversationEngine, _buffered_chat_events, compact_tool_calls
 from .schemas import ChatRequest, ChatResponse, HealthResponse, OpenAIChatCompletionRequest, ToolProxyRequest
 from .security import require_api_auth
 
@@ -65,10 +65,16 @@ def create_app(
     def chat_stream(request: ChatRequest) -> StreamingResponse:
         def events():
             for event in engine.stream_chat(request):
+                if event.get("type") in {"progress", "heartbeat"}:
+                    yield _sse_comment(event)
+                    continue
                 yield f"event: {event['event']}\n"
                 yield f"data: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(events(), media_type="text/event-stream")
+        return StreamingResponse(
+            events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/api/ask/stream/chat/completions", dependencies=[Depends(_auth)])
     def platform_stream_chat_completions(
@@ -103,6 +109,9 @@ def create_app(
                         else _buffered_openai_events(engine, chat_request, settings.stream_chunk_chars)
                     )
                     for event in source:
+                        if event.get("type") in {"progress", "heartbeat"}:
+                            yield _sse_comment(event)
+                            continue
                         if event.get("model"):
                             model = str(event["model"])
                         if event.get("type") == "delta" and event.get("content"):
@@ -270,7 +279,11 @@ def _buffered_openai_events(
     chat_request: ChatRequest,
     chunk_chars: int,
 ) -> Iterator[dict[str, Any]]:
-    result = engine.chat(chat_request)
+    for event in _buffered_chat_events(engine, chat_request):
+        if event["type"] == "heartbeat":
+            yield event
+        else:
+            result = event["result"]
     for chunk in _split_text(result.answer, chunk_chars):
         yield {"type": "delta", "content": chunk, "model": result.model}
     yield {
@@ -279,7 +292,15 @@ def _buffered_openai_events(
         "model": result.model,
         "route": result.route,
         "tool_calls": compact_tool_calls(result.tool_observations),
+        **({"evidence_delivery": result.evidence_delivery} if result.evidence_delivery is not None else {}),
     }
+
+
+def _sse_comment(event: dict[str, Any]) -> str:
+    if event["type"] == "heartbeat":
+        return ": heartbeat\n\n"
+    progress = {key: event[key] for key in ("stage", "batch_count", "completed") if key in event}
+    return f": progress {json.dumps(progress, ensure_ascii=True, separators=(',', ':'))}\n\n"
 
 
 def _split_text(text: str, chunk_chars: int) -> Iterator[str]:

@@ -7,7 +7,7 @@ if [[ -f .env ]]; then
   set -a; source .env; set +a
 fi
 
-PDF_INPUT_DIR="${PDF_INPUT_DIR:-./data/pdfs}"
+PDF_INPUT_DIR="${PDF_INPUT_DIR:-G:/coating_1/20260502062406317/pdf}"
 MAX="${1:-0}"
 
 i=0

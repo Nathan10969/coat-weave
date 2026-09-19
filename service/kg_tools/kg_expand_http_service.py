@@ -41,14 +41,14 @@ EMBED_URL = os.environ.get("KG_HYBRID_EMBED_URL", "http://127.0.0.1:8010/embed")
 KG_AGGREGATE_DIR = Path(
     os.environ.get(
         "KG_AGGREGATE_DIR",
-        str(getattr(expand, "DEFAULT_KG_DIR", Path(__file__).resolve().parents[1] / "data" / "kg_aggregate")),
+        str(getattr(expand, "DEFAULT_KG_DIR", Path("/root/coating/embedding/data/kg_286_aggregate"))),
     )
 )
 KG_SOURCE_MANIFEST_PATH = Path(os.environ["KG_SOURCE_MANIFEST"]) if os.environ.get("KG_SOURCE_MANIFEST") else None
 RETRIEVAL_CONFIG_PATH = Path(
     os.environ.get(
         "KG_HYBRID_CONFIG",
-        str(Path(__file__).resolve().parents[1] / "config" / "hyperedge_retrieval_config.json"),
+        "/root/coating/embedding/deploy/hyperedge_retrieval_best_config.json",
     )
 )
 
@@ -422,7 +422,62 @@ def compact_output(raw_payload: dict[str, Any], *, max_context_facts: int, max_e
     }
 
 
+def full_hyperedge_summary(item: dict[str, Any]) -> dict[str, Any]:
+    raw = (item.get("hyperedge") or {}).get("raw") or {}
+    metadata = (item.get("db_hyperedge") or {}).get("metadata") or {}
+    # Keep the familiar summary fields, but do not semantically deduplicate material rows.
+    without_materials = {key: value for key, value in raw.items() if key not in MATERIAL_ROLES}
+    summary = compact_hyperedge_summary({**item, "hyperedge": {"raw": without_materials}})
+    summary["materials"] = [
+        {"role": role, **row}
+        for role in MATERIAL_ROLES
+        for row in ([raw[role]] if isinstance(raw.get(role), dict) else raw.get(role) or [])
+        if isinstance(row, dict)
+    ]
+    summary.update(metadata)
+    summary.update(raw)
+    for key in ("fact_ids", "evidence_ids"):
+        summary[key] = expand.unique_texts(metadata.get(key), raw.get(key))
+    return summary
+
+
+def full_output(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    items = []
+    for item in raw_payload.get("results") or []:
+        hyperedge = item["hyperedge"]
+        raw = hyperedge.get("raw")
+        projected = {
+            "object_id": item["object_id"], "doc_id": item["doc_id"],
+            "hyperedge_id": (raw or {}).get("hyperedge_id") or hyperedge.get("raw_hyperedge_id"),
+            "hyperedge_raw": raw, "hyperedge_summary": full_hyperedge_summary(item),
+            "patent": item["patent"].get("raw") or {},
+            "patent_profile": item["patent_profile"].get("raw") or {},
+            "unresolved": item["unresolved"], "coverage": item["coverage"],
+            "supplementary_unresolved": item["supplementary_unresolved"],
+            "provenance": {key: item[key].get("provenance") for key in ("hyperedge", "patent", "patent_profile")},
+        }
+        for key in ("facts", "evidence", "context_facts", "context_evidence"):
+            projected[key] = [{**row["raw"], **row} for row in item[key]]
+        items.append(projected)
+    summary = dict(raw_payload.get("summary") or {})
+    summary["context_fact_count"] = sum(len(item["context_facts"]) for item in items)
+    summary["context_evidence_count"] = sum(len(item["context_evidence"]) for item in items)
+    status = "ok" if all(item["coverage"]["complete"] for item in items) else "partial"
+    if not summary.get("db_found"):
+        status = "not_found"
+    return {
+        "tool": "kg.expand_hyperedge_multihop", "evidence_mode": "full", "status": status,
+        "generated_at": now_iso(), "summary": summary, "items": items,
+    }
+
+
 def run_expand(request: dict[str, Any]) -> dict[str, Any]:
+    evidence_mode = request.get("evidence_mode", "compact")
+    if evidence_mode not in ("compact", "full"):
+        return {
+            "tool": "kg.expand_hyperedge_multihop", "status": "error",
+            "error": "evidence_mode must be compact or full", "summary": {}, "items": [],
+        }
     object_ids = unique_strings(request.get("object_ids"))
     if not object_ids:
         return {
@@ -435,6 +490,8 @@ def run_expand(request: dict[str, Any]) -> dict[str, Any]:
     object_ids = object_ids[:MAX_OBJECT_IDS]
     max_context_facts = int(request.get("max_context_facts") or 20)
     max_evidence_per_item = int(request.get("max_evidence_per_item") or 5)
+    if evidence_mode == "full" and request.get("max_context_facts") is not None:
+        max_context_facts = max(int(request["max_context_facts"]), 0)
     pg_env = expand.load_pg_env(expand.DEFAULT_PG_ENV)
     kg_dirs, kg_zips = resolve_kg_sources()
     store = get_store()
@@ -448,7 +505,10 @@ def run_expand(request: dict[str, Any]) -> dict[str, Any]:
         kg_zips=kg_zips,
         pg_env=expand.DEFAULT_PG_ENV,
         max_context_facts=max_context_facts,
+        evidence_mode=evidence_mode,
     )
+    if evidence_mode == "full":
+        return full_output(raw_payload)
     return compact_output(
         raw_payload,
         max_context_facts=max_context_facts,
@@ -2314,8 +2374,11 @@ def run_resin_system_aggregate(
         "tool": "kg.sql_aggregate",
         "status": "ok" if items else "empty",
         "query_interpretation": {"intent": "group_count", "target": target, "group_by": group_by, "filters": filters},
+        "count_unit": "patent",
+        "cohort_mode": "document",
         "summary": {
             "matched_hyperedges": len(matched),
+            "total_count": total_docs,
             "matched_doc_count": total_docs,
             "classified_doc_count": classified_docs,
             "unknown_doc_count": unknown_docs,
@@ -2615,6 +2678,7 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
                     {
                         "value": " | ".join(combo),
                         "group_values": {dim: combo[idx] for idx, dim in enumerate(dim_names)},
+                        "canonical_id": slug_id(dim_names[0].upper(), combo[0]) if len(dim_names) == 1 else None,
                         "count": 0,
                         "doc_ids": set(),
                         "assignees": set(),
@@ -2654,6 +2718,8 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             },
             "summary": {
                 "matched_hyperedges": len(matched),
+                "total_count": len(distinct_docs),
+                "distinct_count": len(distinct_docs),
                 "total_distinct_docs": len(distinct_docs),
                 "bucket_membership_count": membership,
                 "group_count": len(buckets_c),

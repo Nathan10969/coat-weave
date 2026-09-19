@@ -1,4 +1,4 @@
-# Coating API Service
+# A100 Coating API Service
 
 This folder is the platform-facing migration of the local dialogue-memory KG demo.
 It intentionally excludes the browser demo `static/` UI. Company frontend code
@@ -13,14 +13,14 @@ The API service owns routing, doc-scope memory, planner orchestration, model
 calls, and compact API responses. The KG tools service owns hybrid search,
 hyperedge multi-hop expansion, and template SQL aggregation.
 
-## Deployment template
+## Setup On A100
 
 ```bash
-cd /opt/coat-weave/service
-/opt/coat-weave/.venv/bin/python -m pip install -r requirements.txt
+cd /root/coating/coating_api_service
+/root/coating/envs/coating/bin/python -m pip install -r requirements.txt
 cp config/.env.example .env
 # edit .env with the real token, DeepSeek key, Postgres DSN, Redis URL, and allowed IPs
-/opt/coat-weave/.venv/bin/python scripts/init_db.py
+/root/coating/envs/coating/bin/python scripts/init_db.py
 cp systemd/coating-api.service /etc/systemd/system/
 cp systemd/coating-kg-tools.service /etc/systemd/system/
 systemctl daemon-reload
@@ -30,8 +30,8 @@ systemctl enable --now coating-kg-tools.service coating-api.service
 ## Smoke
 
 ```bash
-cd /opt/coat-weave/service
-/opt/coat-weave/.venv/bin/python scripts/smoke_test.py \
+cd /root/coating/coating_api_service
+/root/coating/envs/coating/bin/python scripts/smoke_test.py \
   --base-url http://127.0.0.1:8031 \
   --token "$COATING_API_TOKEN"
 ```
@@ -73,7 +73,7 @@ Content-Type: application/json
 Public nginx URL:
 
 ```text
-https://example.com/api/ask/stream/chat/completions
+https://dev.mappingengine.com.cn/api/ask/stream/chat/completions
 ```
 
 Request shape:

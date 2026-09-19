@@ -22,6 +22,7 @@ from demo_text import (
     stable_id,
 )
 from graph_store import graph_edge, graph_node, upsert_graph_records
+from kg_contract import apply_retrieval_policy, load_tool_contract
 from routing import (
     APPLICATION_FAMILY_EXACT_MATCH_EXEMPT,
     CORROSION_EXPANSION_TERMS,
@@ -30,6 +31,7 @@ from routing import (
     build_kg_search_queries,
     infer_aggregate_intent,
     infer_aggregate_target,
+    kg_search_only_requested,
     load_kg_filter_vocab,
     route_tools,
 )
@@ -573,20 +575,48 @@ def item_doc_id(item: dict[str, Any]) -> str:
 
 def filter_search_result_by_doc_scope(search_result: dict[str, Any], filters: dict[str, Any] | None) -> dict[str, Any]:
     normalized_filters = normalize_kg_search_filters(filters)
-    allowed_doc_ids = {normalize_doc_id(doc_id) for doc_id in normalized_filters.get("doc_ids", [])}
+    allowed_doc_ids = {normalize_doc_id(doc_id) or str(doc_id).strip() for doc_id in normalized_filters.get("doc_ids", [])}
     allowed_doc_ids.discard("")
     if not allowed_doc_ids:
         return search_result
-    items = [item for item in (search_result or {}).get("items", []) if isinstance(item, dict)]
-    filtered_items = [item for item in items if item_doc_id(item) in allowed_doc_ids]
-    if len(filtered_items) == len(items):
-        return search_result
+    def in_scope(row: Any) -> bool:
+        if not isinstance(row, dict):
+            return False
+        item = row.get("item", row)
+        if not isinstance(item, dict):
+            return False
+        doc_id = item_doc_id(item)
+        if doc_id not in allowed_doc_ids:
+            return False
+        # Cross-check recognizable patent IDs without reinterpreting legacy opaque IDs.
+        parts = str(item.get("object_id") or "").split("::")
+        qualified_doc = normalize_doc_id(parts[-2]) if len(parts) >= 3 else ""
+        if qualified_doc and qualified_doc != doc_id:
+            return False
+        if item is not row and row.get("doc_id") and item_doc_id(row) != doc_id:
+            return False
+        return True
+
     scoped = dict(search_result or {})
-    scoped["items"] = filtered_items
-    scoped["status"] = scoped.get("status") if filtered_items else "empty"
+    counts = {}
+    for field in ("items", "exact_items", "adjacent_items"):
+        if field not in scoped:
+            continue
+        rows = scoped.get(field) or []
+        kept = [row for row in rows if in_scope(row)]
+        counts[field] = {"from": len(rows), "to": len(kept)}
+        scoped[field] = kept
+    if all(count["from"] == count["to"] for count in counts.values()):
+        return search_result
+    if scoped.get("status") not in {"unsupported", "error"}:
+        scoped["status"] = scoped.get("status") if scoped.get("exact_items", scoped.get("items")) else "empty"
     summary = dict(scoped.get("summary") or {})
-    summary["scope_filtered_from"] = len(items)
-    summary["scope_filtered_to"] = len(filtered_items)
+    summary["scope_filtered_from"] = counts.get("items", {}).get("from", 0)
+    summary["scope_filtered_to"] = counts.get("items", {}).get("to", 0)
+    summary["scope_filtered_envelopes"] = counts
+    for field, count_key in (("items", "returned"), ("exact_items", "exact_returned"), ("adjacent_items", "adjacent_returned")):
+        if field in counts:
+            summary[count_key] = counts[field]["to"]
     scoped["summary"] = summary
     warnings = list(scoped.get("warnings") or [])
     warnings.append(
@@ -648,31 +678,137 @@ def merge_kg_search_results(results: list[dict[str, Any]], query_variants: list[
     return merged
 
 def run_kg_hybrid_search_for_call(call: dict[str, Any], question: str, query: str) -> dict[str, Any]:
+    call = apply_retrieval_policy(call, candidate_only=kg_search_only_requested(question))
+    if call["retrieval_budget"]["mode"] == "unsupported":
+        return {
+            "status": "unsupported", "query": query, "items": [],
+            "result_mode": call["result_mode"],
+            "unsupported_constraints": call["unsupported_constraints"],
+            "requested_filters": call.get("requested_filters", call.get("filters") or {}),
+            "route_adjustments": call["route_adjustments"],
+            "retrieval_budget": {**call["retrieval_budget"], "actual": {"returned": 0}},
+        }
     # One expanded query defines one stable 100-item ranking pool. Fan-out
     # variants were merged only after pagination and could reintroduce objects
     # from page one on later pages.
     query_variants = build_kg_search_queries(query, question, max_variants=1)
-    results = [
-        _app_value("kg_hybrid_search", kg_hybrid_search)(
-            variant,
-            top_k=int_or_default(call.get("top_k"), KG_HYBRID_DEFAULT_TOP_K),
-            candidate_k=int_or_default(
-                call.get("candidate_k"),
-                KG_HYBRID_DEFAULT_CANDIDATE_K,
-            ),
-            offset=max(0, int_or_default(call.get("offset"), 0)),
-            filters=call.get("filters"),
-            requested_filters=call.get("requested_filters"),
-            unsupported_constraints=call.get("unsupported_constraints"),
-            route_adjustments=call.get("route_adjustments"),
-        )
-        for variant in query_variants
-    ]
-    if len(results) == 1:
-        result = dict(results[0])
-        result["semantic_query_variants"] = query_variants
-        return result
-    return merge_kg_search_results(results, query_variants)
+    transport_error = False
+    try:
+        results = [
+            _app_value("kg_hybrid_search", kg_hybrid_search)(
+                variant,
+                top_k=int_or_default(call.get("top_k"), KG_HYBRID_DEFAULT_TOP_K),
+                candidate_k=int_or_default(call.get("candidate_k"), KG_HYBRID_DEFAULT_CANDIDATE_K),
+                offset=max(0, int_or_default(call.get("offset"), 0)),
+                filters=call.get("filters"),
+                requested_filters=call.get("requested_filters"),
+                unsupported_constraints=call.get("unsupported_constraints"),
+                route_adjustments=call.get("route_adjustments"),
+            )
+            for variant in query_variants
+        ]
+        result = dict(results[0]) if len(results) == 1 else merge_kg_search_results(results, query_variants)
+    except Exception as exc:  # noqa: BLE001
+        transport_error = True
+        result = {"status": "error", "error": str(exc), "items": []}
+    if result.get("status") == "error":
+        result.setdefault("error", "kg.hybrid_search returned an error")
+    result["semantic_query_variants"] = query_variants
+    result["result_mode"] = call["result_mode"]
+    result["retrieval_budget"] = {
+        **call["retrieval_budget"],
+        "actual": {"returned": None if transport_error else len(result.get("items") or [])},
+    }
+    summary = result.get("summary") or {}
+    for key in ("pool_size", "dense_found", "sparse_found"):
+        if key in summary:
+            result["retrieval_budget"]["actual"][key] = summary[key]
+    result["route_adjustments"] = list(dict.fromkeys(
+        list(result.get("route_adjustments") or []) + call["route_adjustments"]
+    ))
+    return result
+
+
+def run_kg_expand_for_call(
+    call: dict[str, Any], object_ids: list[str], *, budget: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    call = apply_retrieval_policy(call)
+    budget = budget if budget is not None else call["retrieval_budget"]
+    transport_error = False
+    try:
+        result = dict(_app_value("kg_expand_hyperedge_multihop", kg_expand_hyperedge_multihop)(
+            object_ids,
+            max_context_facts=int_or_default(call.get("max_context_facts"), 20),
+            max_evidence_per_item=int_or_default(call.get("max_evidence_per_item"), 5),
+            evidence_mode="full",
+        ))
+    except Exception as exc:  # noqa: BLE001
+        transport_error = True
+        result = {"status": "error", "error": str(exc), "items": []}
+    if result.get("status") == "error":
+        result.setdefault("error", "kg.expand_hyperedge_multihop returned an error")
+    items = result.get("items") or []
+    coverage = [(item.get("coverage") or {}) if isinstance(item, dict) else {} for item in items]
+    # A returned placeholder is not a resolved object; missing coverage is unknown.
+    resolved = (result.get("summary") or {}).get("db_found")
+    if resolved is None and all(isinstance(row.get("db_found"), bool) for row in coverage):
+        resolved = sum(row["db_found"] for row in coverage)
+    complete = sum(row["complete"] for row in coverage) if all(
+        isinstance(row.get("complete"), bool) for row in coverage
+    ) else None
+    result["retrieval_budget"] = {
+        **budget,
+        "actual": {
+            **(budget.get("actual") or {}), "selected": len(object_ids),
+            "response_items": None if transport_error else len(items),
+            "resolved": None if result.get("error") else resolved,
+            "complete": None if result.get("error") else complete,
+        },
+    }
+    result["route_adjustments"] = list(dict.fromkeys(
+        list(result.get("route_adjustments") or []) + call["route_adjustments"]
+    ))
+    return result
+
+
+def record_hybrid_with_expansion(
+    observations: list[dict[str, Any]],
+    call: dict[str, Any],
+    question: str,
+    query: str,
+    *,
+    turn_id: str | None,
+    route_id: str,
+    parent_id: str | None = None,
+) -> None:
+    """Share the evidence path between normal retrieval and doc-scan fallback."""
+    result = run_kg_hybrid_search_for_call(call, question, query)
+    result = filter_search_result_by_doc_scope(result, call.get("filters"))
+    result["routing_reason"] = call.get("reason", "")
+    if parent_id is not None:
+        result["planner_parent_tool_observation_id"] = parent_id
+    budget = result["retrieval_budget"]
+    object_ids = [] if result.get("error") else select_expand_object_ids(
+        result, budget["effective"]["expand_top_k"], question,
+    )
+    if not result.get("error"):
+        budget["actual"]["returned"] = len(result.get("items") or [])
+    budget["actual"]["selected"] = len(object_ids)
+    observation = _app_value("record_tool_observation", record_tool_observation)(
+        question, result, tool="kg.hybrid_search", turn_id=turn_id, route_id=route_id,
+        error=result.get("error"),
+    )
+    observations.append(observation)
+    if not object_ids:
+        return
+    expand_result = run_kg_expand_for_call(call, object_ids, budget=budget)
+    expand_result["routing_reason"] = "v3 planner follow-up from kg.hybrid_search"
+    expand_result["planner_parent_tool_observation_id"] = observation.get("id")
+    expand_result["semantic_guard"] = semantic_guard_for_expand_result(question, expand_result)
+    observations.append(_app_value("record_tool_observation", record_tool_observation)(
+        question, expand_result, tool="kg.expand_hyperedge_multihop", turn_id=turn_id, route_id=route_id,
+        error=expand_result.get("error"),
+    ))
 
 
 DOC_FIELD_SCAN_NO_HYPEREDGES_WARNING = "structured_doc_scan_no_hyperedges"
@@ -687,16 +823,20 @@ def hybrid_fallback_call_from_doc_scan(
 ) -> dict[str, Any]:
     query = str(call.get("query") or question).strip() or question
     filters = normalize_kg_search_filters(call.get("filters"))
-    filters["doc_ids"] = doc_ids
-    return {
+    if doc_ids:
+        filters["doc_ids"] = doc_ids
+    requested_filters = {**filters, **(call.get("requested_filters") or {})}
+    for alias in load_tool_contract()["filter_aliases"]["doc_ids"]:
+        requested_filters.pop(alias, None)
+    requested_filters["doc_ids"] = list(filters.get("doc_ids") or [])
+    return apply_retrieval_policy({
+        **call,
         "tool": "kg.hybrid_search",
         "query": query,
-        "top_k": int_or_default(call.get("top_k"), KG_HYBRID_DEFAULT_TOP_K),
-        "candidate_k": int_or_default(call.get("candidate_k"), KG_HYBRID_DEFAULT_CANDIDATE_K),
         "filters": filters,
-        "expand_top_k": 0,
+        "requested_filters": requested_filters,
         "reason": reason,
-    }
+    }, candidate_only=kg_search_only_requested(question))
 
 
 def doc_field_scan_structured_empty(result: dict[str, Any]) -> bool:
@@ -769,45 +909,16 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
         fallback_hybrid_call: dict[str, Any] | None = None
         try:
             if tool == "kg.expand_hyperedge_multihop":
+                if kg_search_only_requested(question):
+                    continue
                 object_ids = normalize_object_ids(call.get("object_ids"), query)
                 if not object_ids:
                     continue
-                result = _app_value("kg_expand_hyperedge_multihop", kg_expand_hyperedge_multihop)(
-                    object_ids,
-                    max_context_facts=int_or_default(call.get("max_context_facts"), 20),
-                    max_evidence_per_item=int_or_default(call.get("max_evidence_per_item"), 5),
-                )
+                result = run_kg_expand_for_call(call, object_ids)
             elif tool == "kg.hybrid_search":
-                result = run_kg_hybrid_search_for_call(call, question, query)
-                result = filter_search_result_by_doc_scope(result, call.get("filters"))
-                result["routing_reason"] = call.get("reason", "")
-                search_observation = _app_value("record_tool_observation", record_tool_observation)(
-                    question,
-                    result,
-                    tool=tool,
-                    turn_id=turn_id,
-                    route_id=route_id,
+                record_hybrid_with_expansion(
+                    observations, call, question, query, turn_id=turn_id, route_id=route_id,
                 )
-                observations.append(search_observation)
-                expand_object_ids = select_expand_object_ids(result, int_or_default(call.get("expand_top_k"), 0), question)
-                if expand_object_ids:
-                    expand_result = _app_value("kg_expand_hyperedge_multihop", kg_expand_hyperedge_multihop)(
-                        expand_object_ids,
-                        max_context_facts=int_or_default(call.get("max_context_facts"), 20),
-                        max_evidence_per_item=int_or_default(call.get("max_evidence_per_item"), 5),
-                    )
-                    expand_result["routing_reason"] = "v3 planner follow-up from kg.hybrid_search"
-                    expand_result["planner_parent_tool_observation_id"] = search_observation.get("id")
-                    expand_result["semantic_guard"] = semantic_guard_for_expand_result(question, expand_result)
-                    observations.append(
-                        _app_value("record_tool_observation", record_tool_observation)(
-                            question,
-                            expand_result,
-                            tool="kg.expand_hyperedge_multihop",
-                            turn_id=turn_id,
-                            route_id=route_id,
-                        )
-                    )
                 continue
             elif tool == "kg.sql_aggregate":
                 aggregate_client = _app_value("kg_sql_aggregate", kg_sql_aggregate)
@@ -848,17 +959,9 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
                         doc_ids=[],
                         reason="kg.doc_field_scan had no doc_ids; fell back to open KG search",
                     )
-                    result = run_kg_hybrid_search_for_call(fallback_hybrid_call, question, query)
-                    result = filter_search_result_by_doc_scope(result, fallback_hybrid_call.get("filters"))
-                    result["routing_reason"] = fallback_hybrid_call["reason"]
-                    observations.append(
-                        _app_value("record_tool_observation", record_tool_observation)(
-                            question,
-                            result,
-                            tool="kg.hybrid_search",
-                            turn_id=turn_id,
-                            route_id=route_id,
-                        )
+                    record_hybrid_with_expansion(
+                        observations, fallback_hybrid_call, question, query,
+                        turn_id=turn_id, route_id=route_id,
                     )
                     continue
                 result = _app_value("kg_doc_field_scan", kg_doc_field_scan)(
@@ -886,27 +989,26 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
             observation = _app_value("record_tool_observation", record_tool_observation)(
                 question,
                 result,
+                error=result.get("error"),
                 tool=tool,
                 turn_id=turn_id,
                 route_id=route_id,
             )
             observations.append(observation)
+            if tool == "kg.doc_field_scan" and result.get("status") == "ok" and not kg_search_only_requested(question):
+                budgeted = apply_retrieval_policy(call)
+                object_ids = select_expand_object_ids(result, budgeted["expand_top_k"], question)
+                if object_ids:
+                    expanded = run_kg_expand_for_call(budgeted, object_ids, budget=budgeted["retrieval_budget"])
+                    expanded["planner_parent_tool_observation_id"] = observation.get("id")
+                    observations.append(_app_value("record_tool_observation", record_tool_observation)(
+                        question, expanded, error=expanded.get("error"), tool="kg.expand_hyperedge_multihop",
+                        turn_id=turn_id, route_id=route_id,
+                    ))
             if fallback_hybrid_call is not None:
-                fallback_result = run_kg_hybrid_search_for_call(fallback_hybrid_call, question, query)
-                fallback_result = filter_search_result_by_doc_scope(
-                    fallback_result,
-                    fallback_hybrid_call.get("filters"),
-                )
-                fallback_result["routing_reason"] = fallback_hybrid_call["reason"]
-                fallback_result["planner_parent_tool_observation_id"] = observation.get("id")
-                observations.append(
-                    _app_value("record_tool_observation", record_tool_observation)(
-                        question,
-                        fallback_result,
-                        tool="kg.hybrid_search",
-                        turn_id=turn_id,
-                        route_id=route_id,
-                    )
+                record_hybrid_with_expansion(
+                    observations, fallback_hybrid_call, question, query,
+                    turn_id=turn_id, route_id=route_id, parent_id=observation.get("id"),
                 )
         except Exception as exc:  # noqa: BLE001
             observations.append(

@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-KG_DIR = Path(os.environ.get("KG_AGGREGATE_DIR", str(Path(__file__).resolve().parents[3] / "data" / "kg_aggregate")))
+KG_DIR = Path(os.environ.get("KG_AGGREGATE_DIR", "/root/coating/embedding/data/kg_286_aggregate"))
 TAXONOMY_PATH = Path(__file__).resolve().parent / "application_family_taxonomy.json"
 
 

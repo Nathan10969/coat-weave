@@ -1,7 +1,7 @@
 """Server-side hyperedge-only pgvector indexing and sample20 evaluation.
 
 This script is intentionally self-contained so it can be uploaded to
-``/opt/coat-weave/embedding/jobs`` and run beside the BGE-M3 HTTP service.
+``/root/coating/embedding/jobs`` and run beside the BGE-M3 HTTP service.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ DEFAULT_HYBRID_DENSE_WEIGHT = 0.1
 DEFAULT_HYBRID_SPARSE_WEIGHT = 0.9
 DEFAULT_HYBRID_FUSION_NAME = "hybrid_weighted_d10_s90"
 
-DEFAULT_BASE = Path(__file__).resolve().parents[1]
+DEFAULT_BASE = Path("/root/coating/embedding")
 DEFAULT_INPUT = DEFAULT_BASE / "data" / "review_bundle_110.zip"
 DEFAULT_SAMPLE20 = DEFAULT_BASE / "data" / "sample20" / "aggregate"
 DEFAULT_OUT = DEFAULT_BASE / "outputs" / "server_sample20_eval"

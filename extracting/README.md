@@ -3,11 +3,11 @@
 **Coating Patent Knowledge Graph — V1.2.2 implementation**
 
 Vertical: 建筑外墙涂料 (architectural exterior coating).
-Demo dataset: 348 BASF PCT patents under `.\data\pdf\`.
+Demo dataset: 348 BASF PCT patents under `G:\coating_1\20260502062406317\pdf\`.
 
 This repo implements the V1.2.2 design — an evidence-grounded hyperedge schema where every fact extracted from a coating patent's Examples section is stored as a multi-slot `FactHyperedge` (9 required + 10 optional + 1 marker fields), connected to canonical `Material / Application / Substrate / Property / Process / TestMethod / Evidence / Patent` nodes through a typed alias subgraph.
 
-Design source of truth: `docs\design\` (markdown 01-08), summarised in `docs\design\Coating_V1.2.2_design.docx`.
+Design source of truth: `G:\coating_1\v1.2_design\` (markdown 01-08), summarised in `G:\coating_1\Coating项目V1.2.2_完整设计稿.docx`.
 
 ---
 
@@ -42,7 +42,7 @@ cp .env.example .env
 bash scripts/setup_db.sh
 
 # 4. ingest one patent end-to-end
-python -m coating_kg ingest "./data/example.pdf"
+python -m coating_kg ingest "G:/coating_1/20260502062406317/pdf/WO2026077939A1.pdf"
 ```
 
 For a smoke test that needs **no** DB and **no** API key, run the deterministic-logic unit tests:
@@ -97,10 +97,10 @@ coating_kg/
 
 ## References
 
-- `docs\design\06_entity_relation_hyperedge.md` — node + edge + hyperedge spec
-- `docs\design\08_v122_amendments.md` — V1.2.1 → V1.2.2 deltas
-- `docs\design\03_config_tables.md` — `forbidden_merge` / `must_merge` / `property_directionality` source
-- `docs\design\Coating_V1.2.2_design.docx` — final consolidated design
+- `G:\coating_1\v1.2_design\06_entity_relation_hyperedge.md` — node + edge + hyperedge spec
+- `G:\coating_1\v1.2_design\08_v122_amendments.md` — V1.2.1 → V1.2.2 deltas
+- `G:\coating_1\v1.2_design\03_config_tables.md` — `forbidden_merge` / `must_merge` / `property_directionality` source
+- `G:\coating_1\Coating项目V1.2.2_完整设计稿.docx` — final consolidated design
 
 ## License
 

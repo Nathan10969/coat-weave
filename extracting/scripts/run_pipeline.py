@@ -14,24 +14,24 @@
 
 用法 (Windows PowerShell):
 
-    cd <repository-root>\\extracting
+    cd G:\\coating_1\\coating_kg
 
     # 单 PDF
-    & "python" scripts\\run_pipeline.py `
-      .\\data\\pdf\\WO2026077939A1.pdf
+    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\run_pipeline.py `
+      G:\\coating_1\\20260502062406317\\pdf\\WO2026077939A1.pdf
 
     # 多个特定 PDF
-    & "python" scripts\\run_pipeline.py `
-      .\\data\\pdf\\WO2026077939A1.pdf `
-      .\\data\\pdf\\WO2026XXXXXX.pdf
+    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\run_pipeline.py `
+      G:\\coating_1\\20260502062406317\\pdf\\WO2026077939A1.pdf `
+      G:\\coating_1\\20260502062406317\\pdf\\WO2026XXXXXX.pdf
 
     # 目录里前 5 篇 (PowerShell 展开)
-    $pdfs = (Get-ChildItem .\\data\\pdf\\*.pdf | Select-Object -First 5).FullName
-    & "python" scripts\\run_pipeline.py @pdfs
+    $pdfs = (Get-ChildItem G:\\coating_1\\20260502062406317\\pdf\\*.pdf | Select-Object -First 5).FullName
+    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\run_pipeline.py @pdfs
 
     # 348 全跑 (耐心等 — ~5h, ~¥150)
-    $pdfs = (Get-ChildItem .\\data\\pdf\\*.pdf).FullName
-    & "python" scripts\\run_pipeline.py @pdfs
+    $pdfs = (Get-ChildItem G:\\coating_1\\20260502062406317\\pdf\\*.pdf).FullName
+    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\run_pipeline.py @pdfs
 
   Skip flags:
     --no-ingest    跳过 Stage 1-7 (用已缓存的 units/facts)

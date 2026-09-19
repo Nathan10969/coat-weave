@@ -2,8 +2,8 @@
 --  coating_kg — V1.2.2 schema
 --  Target: PostgreSQL 16 + pgvector
 --  Source of truth:
---    docs\design\06_entity_relation_hyperedge.md
---    docs\design\08_v122_amendments.md
+--    G:\coating_1\v1.2_design\06_entity_relation_hyperedge.md
+--    G:\coating_1\v1.2_design\08_v122_amendments.md
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS vector;

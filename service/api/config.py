@@ -7,7 +7,7 @@ from typing import Mapping
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_A100_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_A100_ROOT = Path("/root/coating/coating_api_service")
 
 
 def _load_env_file(path: Path, target: dict[str, str]) -> None:
@@ -69,6 +69,12 @@ class CoatingApiSettings:
     context_window_tokens: int = 1_000_000
     max_output_tokens: int = 65_536
     stream_chunk_chars: int = 4
+    stream_read_timeout_seconds: int = 60
+    stream_first_token_timeout_seconds: int = 45
+    stream_content_idle_timeout_seconds: int = 45
+    stream_total_timeout_seconds: int = 180
+    model_packet_max_bytes: int = 524_288
+    model_packet_retry_max_bytes: int = 262_144
     enable_thinking: bool = False
 
     @property
@@ -167,6 +173,12 @@ class CoatingApiSettings:
                 65_536,
             ),
             stream_chunk_chars=_int_env(values.get("LLM_STREAM_CHUNK_CHARS"), 4),
+            stream_read_timeout_seconds=_int_env(values.get("LLM_STREAM_READ_TIMEOUT_SECONDS"), 60),
+            stream_first_token_timeout_seconds=_int_env(values.get("LLM_STREAM_FIRST_TOKEN_TIMEOUT_SECONDS"), 45),
+            stream_content_idle_timeout_seconds=_int_env(values.get("LLM_STREAM_CONTENT_IDLE_TIMEOUT_SECONDS"), 45),
+            stream_total_timeout_seconds=_int_env(values.get("LLM_STREAM_TOTAL_TIMEOUT_SECONDS"), 180),
+            model_packet_max_bytes=_int_env(values.get("LLM_MODEL_PACKET_MAX_BYTES"), 524_288),
+            model_packet_retry_max_bytes=_int_env(values.get("LLM_MODEL_PACKET_RETRY_MAX_BYTES"), 262_144),
             enable_thinking=_bool_env(
                 values.get("DEEPSEEK_ENABLE_THINKING") or values.get("QWEN_ENABLE_THINKING"),
                 False,
@@ -193,6 +205,12 @@ class CoatingApiSettings:
             "LLM_CONTEXT_WINDOW_TOKENS": str(self.context_window_tokens),
             "LLM_MAX_OUTPUT_TOKENS": str(self.max_output_tokens),
             "LLM_STREAM_CHUNK_CHARS": str(self.stream_chunk_chars),
+            "LLM_STREAM_READ_TIMEOUT_SECONDS": str(self.stream_read_timeout_seconds),
+            "LLM_STREAM_FIRST_TOKEN_TIMEOUT_SECONDS": str(self.stream_first_token_timeout_seconds),
+            "LLM_STREAM_CONTENT_IDLE_TIMEOUT_SECONDS": str(self.stream_content_idle_timeout_seconds),
+            "LLM_STREAM_TOTAL_TIMEOUT_SECONDS": str(self.stream_total_timeout_seconds),
+            "LLM_MODEL_PACKET_MAX_BYTES": str(self.model_packet_max_bytes),
+            "LLM_MODEL_PACKET_RETRY_MAX_BYTES": str(self.model_packet_retry_max_bytes),
             "QWEN_CONTEXT_WINDOW_TOKENS": str(self.context_window_tokens),
             "QWEN_MAX_OUTPUT_TOKENS": str(self.max_output_tokens),
             "QWEN_ENABLE_THINKING": "true" if self.enable_thinking else "false",

@@ -1,6 +1,6 @@
 {
  "generated_at": "2026-06-12T07:09:00.472284+00:00",
- "source": "./data/kg_aggregate/patent_profiles.jsonl",
+ "source": "/root/coating/embedding/data/kg_286_aggregate/patent_profiles.jsonl",
  "records": 554,
  "dimensions": {
   "application_family": {

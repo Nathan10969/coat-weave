@@ -20,6 +20,47 @@ def load_tool_contract() -> dict[str, Any]:
     return value
 
 
+def retrieval_policy() -> dict[str, int]:
+    return dict(load_tool_contract()["retrieval_policy"])
+
+
+def apply_retrieval_policy(call: dict[str, Any], *, candidate_only: bool = False) -> dict[str, Any]:
+    """Enforce service budgets without changing query, filters or pagination."""
+    # Explicit model intent wins; phrases and service pagination markers are legacy fallbacks.
+    mode = call.get("result_mode", "candidates" if candidate_only or call.get("_candidate_only_browse") is True else "evidence")
+    mode_spec = load_tool_contract()["tools"]["kg.hybrid_search"]["parameters"]["result_mode"]
+    valid_mode = mode in mode_spec["enum"]
+    candidate_only = mode == "candidates"
+    unsupported = list(call.get("unsupported_constraints") or [])
+    if not valid_mode:
+        issue = f"result_mode:{mode}"
+        if issue not in unsupported:
+            unsupported.append(issue)
+    effective = retrieval_policy()
+    if candidate_only or not valid_mode:
+        effective["expand_top_k"] = 0
+    previous = call.get("retrieval_budget") or {}
+    requested = dict(previous.get("requested", {key: call.get(key) for key in effective}))
+    adjustments = list(call.get("route_adjustments") or [])
+    for key, value in effective.items():
+        if requested.get(key) != value:
+            adjustment = f"retrieval_budget:{key}:{requested.get(key)}->{value}"
+            if adjustment not in adjustments:
+                adjustments.append(adjustment)
+    return {
+        **call,
+        **effective,
+        "result_mode": mode,
+        "unsupported_constraints": unsupported,
+        "_candidate_only_browse": candidate_only,
+        "route_adjustments": adjustments,
+        "retrieval_budget": {
+            "requested": requested, "effective": effective,
+            "mode": ("candidate_only" if candidate_only else "evidence") if valid_mode else "unsupported",
+        },
+    }
+
+
 def _load_json_config(name: str) -> dict[str, Any]:
     path = CONFIG_DIR / name
     if not path.exists():
@@ -73,11 +114,22 @@ def load_coating_family_concepts() -> tuple[dict[str, list[str]], dict[str, str]
 def load_material_resin_aliases() -> dict[str, str]:
     raw = _load_json_config("material_resin_aliases.json")
     aliases = raw.get("resin_system_aliases") if isinstance(raw.get("resin_system_aliases"), dict) else {}
-    return {
+    out = {
         str(k).strip().casefold(): str(v).strip().casefold()
         for k, v in aliases.items()
         if str(k).strip() and str(v).strip()
     }
+    return out
+
+
+def normalize_resin_systems(value: Any) -> list[str]:
+    aliases = load_material_resin_aliases()
+    out: list[str] = []
+    for item in normalize_string_list(value):
+        canonical = aliases.get(item.casefold(), item)
+        if canonical not in out:
+            out.append(canonical)
+    return out
 
 
 @lru_cache(maxsize=1)
@@ -427,13 +479,15 @@ def normalize_filter_request(tool: str, value: Any) -> dict[str, Any]:
                 if item not in unsupported:
                     unsupported.append(item)
             if resin_migrated:
-                existing = normalize_string_list(
+                existing = normalize_resin_systems(
                     effective.get("resin_systems") or canonical_values.get("resin_systems")
                 )
                 for resin in resin_migrated:
                     if resin not in existing:
                         existing.append(resin)
                 effective["resin_systems"] = existing
+        elif field == "resin_systems":
+            effective[field] = normalize_resin_systems(raw_value)
         else:
             effective[field] = normalize_string_list(raw_value)
 
@@ -470,9 +524,8 @@ def normalize_filter_request(tool: str, value: Any) -> dict[str, Any]:
             if item not in unsupported:
                 unsupported.append(item)
         effective["material_groups"] = groups
-        resin_aliases = load_material_resin_aliases()
         if resin_migrated:
-            existing = list(effective.get("resin_systems") or [])
+            existing = normalize_resin_systems(effective.get("resin_systems") or [])
             for resin in resin_migrated:
                 if resin not in existing:
                     existing.append(resin)
@@ -536,6 +589,8 @@ def openai_tool_parameters(tool: str) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     required: list[str] = []
     for name, spec in (tool_config.get("parameters") or {}).items():
+        if tool == "kg.hybrid_search" and name in contract["retrieval_policy"]:
+            continue
         field_type = str((spec or {}).get("type") or "string")
         if field_type == "filters":
             schema: dict[str, Any] = {
@@ -561,7 +616,7 @@ def openai_tool_parameters(tool: str) -> dict[str, Any]:
             schema = {"type": "string", "enum": list(contract["aggregate"]["targets"])}
         else:
             schema = {"type": field_type}
-        for bound in ("minimum", "maximum"):
+        for bound in ("minimum", "maximum", "enum", "default", "description"):
             if bound in spec:
                 schema[bound] = spec[bound]
         properties[str(name)] = schema

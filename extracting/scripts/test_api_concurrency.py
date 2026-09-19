@@ -4,8 +4,8 @@ Sends N parallel "reply ok" minimal requests, measures success vs 429s.
 Walks N from 2 to 32, finds the safe concurrent level for our key.
 
 Run:
-    cd <repository-root>\\extracting
-    & "python" scripts\\test_api_concurrency.py
+    cd G:\\coating_1\\coating_kg
+    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\test_api_concurrency.py
 
 Output: a table per concurrency level showing
     requests / 200 OK / 429 rate-limited / mean latency / wall time

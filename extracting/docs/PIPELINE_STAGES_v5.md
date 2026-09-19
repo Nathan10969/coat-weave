@@ -1,4 +1,4 @@
-# Coating Patent Knowledge Graph 鈥?瀹屾暣 Pipeline 鏂囨。
+﻿# Coating Patent Knowledge Graph 鈥?瀹屾暣 Pipeline 鏂囨。
 
 娑电洊 13 涓?stage锛堝惈 V2 寰呭姞鐨?9.5 鍜?10锛夈€佸綋鍓嶄簯 API 璋冪敤鏂瑰紡銆佹湭鏉ユ湰鍦?AWQ 妯″瀷杩佺Щ鏂规銆佷互鍙婁竴涓畬鏁寸殑绔埌绔ず渚嬨€?
 ---
@@ -607,7 +607,7 @@ vllm serve ~/models/Qwen3.6-27B-AWQ-INT4 \
 ### 杈撳叆
 
 ```
-.\data\pdf\WO2026052438A1.pdf
+G:\coating_1\20260502062406317\pdf\WO2026052438A1.pdf
 ```
 
 42 椤?PDF锛屽惈锛?- 鎽樿銆佽鏄庛€乧laims锛坧age 1-22锛?- Examples 绔犺妭锛坧age 23-41锛夊惈 6 寮犺〃

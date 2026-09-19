@@ -1,6 +1,6 @@
 # Setup script for the coating_kg project (Windows PowerShell)
 # Usage:
-#   PS> cd <repository-root>\extracting
+#   PS> cd G:\coating_1\coating_kg
 #   PS> .\scripts\setup_env.ps1
 
 $ErrorActionPreference = "Stop"

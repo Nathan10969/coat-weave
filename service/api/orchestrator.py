@@ -22,6 +22,56 @@ from storage.repository import ServiceRepository
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 CORE_DIR = SERVICE_ROOT / "core"
+_STREAM_HEARTBEAT_SECONDS = 15.0
+_conversation_locks_guard = threading.Lock()
+_conversation_locks: dict[str, tuple[Any, int]] = {}
+
+
+@contextmanager
+def _local_conversation_lock(conversation_id: str) -> Iterator[None]:
+    # Keep local requests serialized even if the external lock lease expires.
+    with _conversation_locks_guard:
+        lock, users = _conversation_locks.get(conversation_id, (threading.RLock(), 0))
+        _conversation_locks[conversation_id] = (lock, users + 1)
+    try:
+        with lock:
+            yield
+    finally:
+        with _conversation_locks_guard:
+            _, users = _conversation_locks[conversation_id]
+            if users == 1:
+                del _conversation_locks[conversation_id]
+            else:
+                _conversation_locks[conversation_id] = (lock, users - 1)
+
+
+def _buffered_chat_events(
+    engine: CoatingConversationEngine, request: ChatRequest,
+) -> Iterator[dict[str, Any]]:
+    results: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
+
+    def produce() -> None:
+        try:
+            result = engine.chat(request)
+        except Exception as exc:
+            results.put_nowait({"type": "error", "error": exc})
+        else:
+            results.put_nowait({"type": "result", "result": result})
+
+    # One chat call owns generation and persistence, including after disconnect.
+    threading.Thread(
+        target=produce, name=f"coating-buffered-producer-{request.conversation_id}", daemon=True,
+    ).start()
+    while True:
+        try:
+            event = results.get(timeout=_STREAM_HEARTBEAT_SECONDS)
+        except queue.Empty:
+            yield {"type": "heartbeat"}
+            continue
+        if event["type"] == "error":
+            raise event["error"]
+        yield event
+        return
 
 
 def _stream_diagnostics(request_id: str, conversation_id: str, *, layer: str):
@@ -53,6 +103,7 @@ class ChatResult:
     citations: list[dict[str, Any]]
     examples: list[dict[str, Any]]
     debug: dict[str, Any] | None = None
+    evidence_delivery: dict[str, Any] | None = None
 
 
 class LegacyRuntime:
@@ -124,8 +175,8 @@ class LegacyRuntime:
         workspace.mkdir(parents=True, exist_ok=True)
         values = self.workspace_paths(workspace, conversation_id)
         old_values: list[tuple[Any, str, Any]] = []
-        old_app = sys.modules.get("app")
         with self._lock:
+            old_app = sys.modules.get("app")
             shim = types.ModuleType("app")
             for key, value in values.items():
                 setattr(shim, key, value)
@@ -391,7 +442,7 @@ class CoatingConversationEngine:
         workspace = conversation_workspace(self.settings, request.conversation_id)
         route: list[dict[str, Any]] = []
         error: str | None = None
-        with self.repository.conversation_lock(request.conversation_id):
+        with _local_conversation_lock(request.conversation_id), self.repository.conversation_lock(request.conversation_id):
             try:
                 self.repository.record_turn(
                     conversation_id=request.conversation_id,
@@ -438,6 +489,8 @@ class CoatingConversationEngine:
                         "tool_observations": tool_observations,
                         "route": route,
                     }
+                    if "evidence_delivery" in model_result:
+                        debug["evidence_delivery"] = model_result["evidence_delivery"]
                 return ChatResult(
                     answer=model_result["answer"],
                     provider=model_result["provider"],
@@ -448,6 +501,7 @@ class CoatingConversationEngine:
                     citations=_extract_citations(tool_observations),
                     examples=_extract_examples(tool_observations),
                     debug=debug,
+                    evidence_delivery=model_result.get("evidence_delivery"),
                 )
             except Exception as exc:
                 error = str(exc)
@@ -463,7 +517,11 @@ class CoatingConversationEngine:
                 )
 
     def stream_chat(self, request: ChatRequest) -> Iterator[dict[str, Any]]:
-        result = self.chat(request)
+        for event in _buffered_chat_events(self, request):
+            if event["type"] == "heartbeat":
+                yield event
+            else:
+                result = event["result"]
         yield {"event": "route", "data": {"tool_calls": [call for call in result.route]}}
         for obs in result.tool_observations:
             yield {
@@ -476,7 +534,10 @@ class CoatingConversationEngine:
             }
         for idx in range(0, len(result.answer), 32):
             yield {"event": "delta", "data": {"delta": result.answer[idx : idx + 32]}}
-        yield {"event": "done", "data": {"answer": result.answer, "model": result.model}}
+        done = {"answer": result.answer, "model": result.model}
+        if result.evidence_delivery is not None:
+            done["evidence_delivery"] = result.evidence_delivery
+        yield {"event": "done", "data": done}
 
     def stream_openai_chat_completion(
         self,
@@ -502,6 +563,14 @@ class CoatingConversationEngine:
                 diag.event("stream_queue_dropped_delta", dropped=dropped_client_deltas)
 
         def enqueue_client_event(event: dict[str, Any]) -> None:
+            if event.get("type") in {"progress", "heartbeat"}:
+                # Auxiliary traffic must leave room for done and the sentinel.
+                if events.qsize() < max(0, events.maxsize - 2):
+                    try:
+                        events.put_nowait(event)
+                    except queue.Full:
+                        pass
+                return
             if event.get("type") == "delta":
                 try:
                     events.put_nowait(event)
@@ -533,6 +602,7 @@ class CoatingConversationEngine:
             answer_parts: list[str] = []
             packet: dict[str, Any] = {}
             tool_observations: list[dict[str, Any]] = []
+            evidence_receipt: dict[str, Any] | None = None
             lock_wait_started = 0.0
             lock_acquired_at: float | None = None
             if diag:
@@ -542,7 +612,7 @@ class CoatingConversationEngine:
                     diag.event("lock_wait_start", lock_name="conversation_lock")
                 lock_wait_started = time.monotonic()
                 try:
-                    with self.repository.conversation_lock(request.conversation_id):
+                    with _local_conversation_lock(request.conversation_id), self.repository.conversation_lock(request.conversation_id):
                         lock_acquired_at = time.monotonic()
                         if diag:
                             diag.event(
@@ -576,10 +646,15 @@ class CoatingConversationEngine:
                             mock_model=request.options.mock_model,
                             diag_request_id=diagnostic_id,
                         ):
+                            if event.get("type") in {"progress", "heartbeat"}:
+                                enqueue_client_event(event)
+                                continue
                             if event.get("provider"):
                                 provider = str(event["provider"])
                             if event.get("model"):
                                 model = str(event["model"])
+                            if event.get("type") == "done" and "evidence_delivery" in event:
+                                evidence_receipt = event["evidence_delivery"]
                             if event.get("type") == "delta":
                                 content = str(event.get("content") or "")
                                 if content:
@@ -626,6 +701,7 @@ class CoatingConversationEngine:
                                 "model": model,
                                 "route": route,
                                 "tool_calls": compact_tool_calls(tool_observations),
+                                **({"evidence_delivery": evidence_receipt} if evidence_receipt is not None else {}),
                             }
                         )
                         if diag:
@@ -648,14 +724,16 @@ class CoatingConversationEngine:
                 elapsed_ms = int((time.time() - started) * 1000)
                 if diag:
                     diag.event("stream_request_closed", elapsed_ms=elapsed_ms, error=error)
-                self.repository.record_trace(
-                    request_id=request_id,
-                    conversation_id=request.conversation_id,
-                    route=route,
-                    elapsed_ms=elapsed_ms,
-                    error=error,
-                )
-                enqueue_terminal_event(sentinel)
+                try:
+                    self.repository.record_trace(
+                        request_id=request_id,
+                        conversation_id=request.conversation_id,
+                        route=route,
+                        elapsed_ms=elapsed_ms,
+                        error=error,
+                    )
+                finally:
+                    enqueue_terminal_event(sentinel)
 
         producer = threading.Thread(
             target=produce,
@@ -664,7 +742,11 @@ class CoatingConversationEngine:
         )
         producer.start()
         while True:
-            item = events.get()
+            try:
+                item = events.get(timeout=_STREAM_HEARTBEAT_SECONDS)
+            except queue.Empty:
+                yield {"type": "heartbeat"}
+                continue
             if item is sentinel:
                 break
             yield item

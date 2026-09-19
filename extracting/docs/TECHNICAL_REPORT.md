@@ -1,4 +1,4 @@
-# Coating Patent Knowledge Graph 鈥?鎶€鏈姤鍛?v1.0
+﻿# Coating Patent Knowledge Graph 鈥?鎶€鏈姤鍛?v1.0
 
 > **鑼冨洿**锛欱ASF 348 绡?PCT 娑傛枡涓撳埄鐨勪簨瀹炴娊鍙?+ 鐭ヨ瘑鍥捐氨鏋勫缓 + 闂瓟 retrieval銆?> **鐘舵€?*锛歏1 demo锛坵ide CSV 杈撳嚭锛墌80% 瀹屾垚锛沄2 KG retrieval 璁捐鍐荤粨锛孷2.0.5 姝ｅ湪钀藉湴銆?> **绠楀姏**锛氬崟鍗?A100 80G锛屾湰鍦?vLLM Qwen3.6-27B-AWQ + BGE-M3銆?> **鏂囨。鐗堟湰**锛歷1.0锛?026-05-10锛夈€?
 ---
@@ -1161,7 +1161,7 @@ vllm serve ~/models/Qwen3.6-27B-AWQ-INT4 \
 ### 11.1 鏈琛?
 | 鏈 | 鍚箟 |
 |------|------|
-| spec | `docs\design\` 涓嬬殑璁捐鏂囨。锛堥」鐩娉曪級|
+| spec | `G:\coating_1\v1.2_design\` 涓嬬殑璁捐鏂囨。锛堥」鐩娉曪級|
 | Layer 0 / 1 / 2 | 鑺傜偣灞?/ 寮卞彫鍥炲眰 / 绮剧‘璇佹嵁灞?|
 | FactHyperedge | Layer 2 澶氭Ы浣?JSON fact锛孨 鍏冨叧绯?|
 | PassageHyperedge | Layer 1 娈佃惤鍘熸枃 + tagged_entities |

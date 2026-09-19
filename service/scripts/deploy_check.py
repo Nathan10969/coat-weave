@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path("/root/coating/coating_api_service")
 REQUIRED = [
     ROOT / "api" / "main.py",
     ROOT / "core" / "routing.py",

@@ -1,8 +1,8 @@
 """Test patent_metadata_extractor on WO2026077939A1.
 
 Usage (Windows PowerShell):
-    cd <repository-root>\\extracting
-    & "python" scripts\\test_patent_meta.py
+    cd G:\\coating_1\\coating_kg
+    & "G:\\miniconda3\\envs\\coating\\python.exe" scripts\\test_patent_meta.py
 """
 from __future__ import annotations
 

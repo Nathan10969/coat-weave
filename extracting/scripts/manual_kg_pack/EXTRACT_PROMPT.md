@@ -37,7 +37,7 @@ Two other parameters are passed in:
 
 ## 1. Goal
 
-Produce a single self-contained `kg_pack` directory matching the GPT Pro sample at `<repository-root>\extracting\scripts\manual_kg_pack\reference\WO2015132366A1\` (when present). Specifically:
+Produce a single self-contained `kg_pack` directory matching the GPT Pro sample at `G:\coating_1\coating_kg\scripts\manual_kg_pack\reference\WO2015132366A1\` (when present). Specifically:
 
 - Every table row in scope → one `EvidenceRecord` with **N `direct_extracted_units` slot-facts** (one per material/metric/condition).
 - Every method/process/test paragraph in scope → one `EvidenceRecord` with slot-facts for substrate / process / test_method / test_standard / test_condition.
@@ -656,7 +656,7 @@ If any gate fails, **fix the affected file and re-run gates** before reporting d
 
 ## 9. Reference example to mirror
 
-A hand-crafted gold sample for `WO2015132366A1` is in `<repository-root>\extracting\scripts\manual_kg_pack\reference\WO2015132366A1\` (when present). Use it for: ID format, slot field shapes, hyperedge bundle structure. **Do not literally copy values** — extract from this patent's own `kg_input.json`.
+A hand-crafted gold sample for `WO2015132366A1` is in `G:\coating_1\coating_kg\scripts\manual_kg_pack\reference\WO2015132366A1\` (when present). Use it for: ID format, slot field shapes, hyperedge bundle structure. **Do not literally copy values** — extract from this patent's own `kg_input.json`.
 
 ---
 

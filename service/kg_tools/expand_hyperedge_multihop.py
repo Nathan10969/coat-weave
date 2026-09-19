@@ -22,7 +22,7 @@ from typing import Any
 OBJECT_TYPE = "hyperedge"
 SCHEMA_VERSION = "hyperedge_multihop_expand_v1"
 
-DEFAULT_BASE = Path(__file__).resolve().parents[1] / "data" / "embedding"
+DEFAULT_BASE = Path("/root/coating/embedding")
 DEFAULT_PG_ENV = DEFAULT_BASE / "pgvector.env"
 DEFAULT_KG_DIR = DEFAULT_BASE / "data" / "kg_286_aggregate"
 DEFAULT_KG_ZIPS = (
@@ -58,14 +58,52 @@ class KgStore:
     evidence_by_id: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     patents_by_doc: dict[str, dict[str, Any]] = field(default_factory=dict)
     patent_profiles_by_doc: dict[str, dict[str, Any]] = field(default_factory=dict)
+    full_records: dict[tuple[str, str, str], list[dict[str, Any]]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    full_records_by_doc: dict[tuple[str, str], list[dict[str, Any]]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
 
-    def add_hyperedge(self, row: Mapping[str, Any], doc_hint: str | None = None) -> None:
+    def remember(
+        self, kind: str, row: Mapping[str, Any], doc_hint: str | None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Retain source-scoped variants without changing the legacy first-row indexes."""
+        doc_id = doc_id_from(row, doc_hint)
+        if not doc_id:
+            return
+        id_field = {"hyperedges": "hyperedge_id", "facts": "fact_id", "evidence": "evidence_id"}.get(kind)
+        record_id = text_or_none(row.get(id_field) or row.get("id")) if id_field else doc_id
+        origin = {**(provenance or {}), "doc_id": doc_id}
+        origin.setdefault("source_id", None)
+        raw = dict(row)
+        if record_id:
+            variants = self.full_records[(kind, doc_id, record_id)]
+            for existing in variants:
+                if existing["provenance"]["source_id"] == origin["source_id"] and existing["raw"] == raw:
+                    if origin not in existing["origins"]:
+                        existing["origins"].append(origin)
+                    return
+        else:
+            # Anonymous records have no identity on which deduplication can be justified.
+            variants = []
+        record = {"id": record_id, "raw": raw, "provenance": origin, "origins": [origin]}
+        variants.append(record)
+        self.full_records_by_doc[(kind, doc_id)].append(record)
+
+    def add_hyperedge(
+        self, row: Mapping[str, Any], doc_hint: str | None = None, *,
+        provenance: Mapping[str, Any] | None = None, original: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.remember("hyperedges", original if original is not None else row, doc_hint, provenance)
         doc_id = doc_id_from(row, doc_hint)
         hyperedge_id = text_or_none(row.get("hyperedge_id"))
         if doc_id and hyperedge_id:
             self.hyperedges.setdefault((doc_id, hyperedge_id), dict(row))
 
-    def add_fact(self, row: Mapping[str, Any], doc_hint: str | None = None) -> None:
+    def add_fact(self, row: Mapping[str, Any], doc_hint: str | None = None, *, provenance: Mapping[str, Any] | None = None) -> None:
+        self.remember("facts", row, doc_hint, provenance)
         doc_id = doc_id_from(row, doc_hint)
         fact_id = text_or_none(row.get("fact_id") or row.get("id"))
         if not doc_id:
@@ -80,18 +118,21 @@ class KgStore:
         if context_id:
             self.facts_by_context[(doc_id, context_id)].append(raw)
 
-    def add_evidence(self, row: Mapping[str, Any], doc_hint: str | None = None) -> None:
+    def add_evidence(self, row: Mapping[str, Any], doc_hint: str | None = None, *, provenance: Mapping[str, Any] | None = None) -> None:
+        self.remember("evidence", row, doc_hint, provenance)
         doc_id = doc_id_from(row, doc_hint)
         evidence_id = text_or_none(row.get("evidence_id") or row.get("id"))
         if doc_id and evidence_id:
             self.evidence_by_id.setdefault((doc_id, evidence_id), dict(row))
 
-    def add_patent(self, row: Mapping[str, Any], doc_hint: str | None = None) -> None:
+    def add_patent(self, row: Mapping[str, Any], doc_hint: str | None = None, *, provenance: Mapping[str, Any] | None = None) -> None:
+        self.remember("patent", row, doc_hint, provenance)
         doc_id = doc_id_from(row, doc_hint)
         if doc_id:
             self.patents_by_doc.setdefault(doc_id, dict(row))
 
-    def add_patent_profile(self, row: Mapping[str, Any], doc_hint: str | None = None) -> None:
+    def add_patent_profile(self, row: Mapping[str, Any], doc_hint: str | None = None, *, provenance: Mapping[str, Any] | None = None) -> None:
+        self.remember("patent_profile", row, doc_hint, provenance)
         doc_id = doc_id_from(row, doc_hint)
         if doc_id:
             self.patent_profiles_by_doc.setdefault(doc_id, dict(row))
@@ -132,6 +173,7 @@ def main() -> int:
         kg_zips=kg_zip_paths,
         pg_env=args.pg_env,
         max_context_facts=args.max_context_facts,
+        evidence_mode=args.evidence_mode,
     )
     write_json(args.out, payload, pretty=args.pretty)
     print(json.dumps(payload["summary"], ensure_ascii=False, sort_keys=True))
@@ -147,6 +189,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kg-dir", type=Path, action="append", default=None)
     parser.add_argument("--kg-zip", type=Path, action="append", default=None)
     parser.add_argument("--max-context-facts", type=int, default=20)
+    parser.add_argument("--evidence-mode", choices=("compact", "full"), default="compact")
     parser.add_argument("--pretty", dest="pretty", action="store_true", default=True)
     parser.add_argument("--no-pretty", dest="pretty", action="store_false")
     return parser.parse_args()
@@ -255,8 +298,11 @@ def load_kg_store(
                 if filename not in KG_FILENAMES:
                     continue
                 doc_hint = doc_hint_from_member(normalized, filename)
-                for row in read_zip_jsonl(zf, name):
-                    add_row(store, filename, row, doc_hint)
+                for record_number, row in enumerate(read_zip_jsonl(zf, name), start=1):
+                    add_row(store, filename, row, doc_hint, provenance={
+                        "source_id": str(path.resolve()), "archive": str(path),
+                        "file": name, "record_number": record_number,
+                    })
     return store
 
 
@@ -265,8 +311,10 @@ def load_kg_dir(store: KgStore, source: KgDirectorySource) -> None:
     for filename in sorted(KG_FILENAMES):
         for table_path in sorted(path.rglob(filename)):
             doc_hint = doc_hint_from_path(table_path, path)
-            for row in read_jsonl_path(table_path):
-                add_row(store, filename, row, doc_hint, source)
+            for record_number, row in enumerate(read_jsonl_path(table_path), start=1):
+                add_row(store, filename, row, doc_hint, source, provenance={
+                    "file": str(table_path), "record_number": record_number,
+                })
 
 
 def read_jsonl_path(path: Path) -> list[dict[str, Any]]:
@@ -312,7 +360,14 @@ def add_row(
     row: Mapping[str, Any],
     doc_hint: str | None,
     source: KgDirectorySource | None = None,
+    *,
+    provenance: Mapping[str, Any] | None = None,
 ) -> None:
+    origin = dict(provenance or {})
+    if source:
+        origin.update(source_id=str(source.path.resolve()), collection_id=source.collection_id,
+                      company=source.company, id_schema_version=source.id_schema_version)
+    origin.setdefault("file", filename)
     if filename == "hyperedges.jsonl":
         raw = dict(row)
         if source and source.collection_id:
@@ -333,15 +388,17 @@ def add_row(
                         f"conflicting object_id for {doc_id}/{hyperedge_id}: {existing_object_id!r} != {object_id!r}"
                     )
                 raw["object_id"] = object_id
-        store.add_hyperedge(raw, doc_hint)
+        if raw.get("object_id"):
+            origin["object_id"] = raw["object_id"]
+        store.add_hyperedge(raw, doc_hint, provenance=origin, original=row)
     elif filename == "facts.jsonl":
-        store.add_fact(row, doc_hint)
+        store.add_fact(row, doc_hint, provenance=origin)
     elif filename == "evidence_units.jsonl":
-        store.add_evidence(row, doc_hint)
+        store.add_evidence(row, doc_hint, provenance=origin)
     elif filename == "patents.jsonl":
-        store.add_patent(row, doc_hint)
+        store.add_patent(row, doc_hint, provenance=origin)
     elif filename == "patent_profiles.jsonl":
-        store.add_patent_profile(row, doc_hint)
+        store.add_patent_profile(row, doc_hint, provenance=origin)
 
 
 def build_output(
@@ -353,9 +410,13 @@ def build_output(
     kg_zips: Sequence[Path],
     pg_env: Path,
     max_context_facts: int,
+    evidence_mode: str = "compact",
 ) -> dict[str, Any]:
+    if evidence_mode not in {"compact", "full"}:
+        raise ValueError("evidence_mode must be compact or full")
     results = [
-        expand_one(object_id, db_rows.get(object_id), store, max_context_facts=max_context_facts)
+        expand_one(object_id, db_rows.get(object_id), store, max_context_facts=max_context_facts,
+                   evidence_mode=evidence_mode)
         for object_id in object_ids
     ]
     summary = {
@@ -387,7 +448,12 @@ def expand_one(
     store: KgStore,
     *,
     max_context_facts: int,
+    evidence_mode: str = "compact",
 ) -> dict[str, Any]:
+    if evidence_mode == "full":
+        return expand_one_full(object_id, db_row, store, max_context_facts=max_context_facts)
+    if evidence_mode != "compact":
+        raise ValueError("evidence_mode must be compact or full")
     if db_row is None:
         return empty_result(object_id)
 
@@ -435,6 +501,263 @@ def expand_one(
             "evidence_ids": unresolved_evidence_ids,
         },
     }
+
+
+def full_record_result(record: Mapping[str, Any], kind: str, match_mode: str) -> dict[str, Any]:
+    id_field = {"facts": "fact_id", "evidence": "evidence_id"}.get(kind, "id")
+    return {
+        id_field: record["id"], "match_mode": match_mode, "raw": record["raw"],
+        "provenance": record["provenance"], "origins": record["origins"],
+    }
+
+
+def expand_one_full(
+    object_id: str, db_row: Mapping[str, Any] | None, store: KgStore, *, max_context_facts: int,
+) -> dict[str, Any]:
+    """Expand the direct closure first; context is a separately budgeted supplement."""
+    result = empty_result(object_id)
+    doc_id = text_or_none(db_row.get("doc_id")) if db_row else None
+    metadata = normalize_metadata(db_row.get("metadata")) if db_row else {}
+    raw_id = resolve_raw_hyperedge_id(object_id, doc_id, metadata)
+    unresolved: dict[str, Any] = {
+        "fact_ids": [], "evidence_ids": [], "conflicts": [],
+        "db_object_ids": [] if db_row else [object_id], "hyperedge_ids": [],
+        "patent_doc_ids": [],
+    }
+    supplementary_unresolved: dict[str, Any] = {
+        "context_fact_ids": [], "context_evidence_ids": [], "patent_profile_doc_ids": [],
+        "conflicts": [], "dropped_context_facts": [],
+    }
+
+    def records(kind: str, record_id: str) -> list[dict[str, Any]]:
+        return store.full_records.get((kind, doc_id or "", record_id), []) if db_row else []
+
+    candidates = []
+    for candidate_id in unique_texts(raw_id, object_id.rsplit("::", 1)[-1],
+                                     metadata.get("raw_hyperedge_id"), metadata.get("hyperedge_id"), object_id):
+        candidates = records("hyperedges", candidate_id)
+        if candidates:
+            break
+
+    # Use the existing retrieval object identity to select provenance, without rewriting IDs.
+    suffix = f"::{doc_id}::{object_id.rsplit('::', 1)[-1]}"
+    namespace = object_id[:-len(suffix)] if object_id.endswith(suffix) else None
+
+    def matches_request_scope(row: dict[str, Any]) -> bool:
+        origin = row["provenance"]
+        collection = origin.get("collection_id")
+        if not collection:
+            return True
+        if namespace:
+            return namespace == "::".join(str(value) for value in (collection, origin.get("company")) if value)
+        return not metadata.get("collection_id") or (
+            metadata["collection_id"] == collection
+            and (not metadata.get("company") or metadata["company"] == origin.get("company"))
+        )
+
+    candidates = [row for row in candidates if matches_request_scope(row)]
+    exact = [row for row in candidates
+             if object_id in (row["provenance"].get("object_id"), row["raw"].get("object_id"))]
+    requested_sources: set[str | None] = set()
+    for kind in ("hyperedges", "facts", "evidence", "patent", "patent_profile"):
+        for row in store.full_records_by_doc.get((kind, doc_id or ""), []) if db_row else []:
+            origin = row["provenance"]
+            collection = origin.get("collection_id")
+            if not collection:
+                continue
+            if matches_request_scope(row):
+                requested_sources.add(origin["source_id"])
+    if exact:
+        candidates = exact
+    elif requested_sources:
+        candidates = [row for row in candidates if row["provenance"]["source_id"] in requested_sources]
+
+    def report_conflicts(
+        kind: str, rows: Sequence[dict[str, Any]], issues: dict[str, Any] | None = None,
+    ) -> None:
+        issues = unresolved if issues is None else issues
+        groups: dict[tuple[Any, Any], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            if row["id"] is not None:
+                groups[(row["provenance"]["source_id"], row["id"])].append(row)
+        for (source_id, record_id), variants in groups.items():
+            if len(variants) > 1:
+                issues["conflicts"].append({
+                    "entity_type": kind, "doc_id": doc_id, "source_id": source_id, "id": record_id,
+                    "variants": [full_record_result(row, kind, "conflicting_id") for row in variants],
+                })
+
+    candidate_sources = {row["provenance"]["source_id"] for row in candidates}
+    scopes = candidate_sources or requested_sources
+    if len(scopes) > 1:
+        unresolved["conflicts"].append({
+            "entity_type": "hyperedges", "doc_id": doc_id, "id": raw_id,
+            "reason": "ambiguous_source", "source_ids": sorted(scopes, key=str),
+            "variants": [full_record_result(row, "hyperedges", "ambiguous_source") for row in candidates],
+        })
+        # Keep one source's partial result; never bind its IDs to another source's rows.
+        scopes = {candidates[0]["provenance"]["source_id"]} if candidates else {sorted(scopes, key=str)[0]}
+
+    def in_scope(row: dict[str, Any]) -> bool:
+        return matches_request_scope(row) and (not scopes or row["provenance"]["source_id"] in scopes)
+
+    candidates = [row for row in candidates if in_scope(row)]
+    report_conflicts("hyperedges", candidates)
+    raw_hyperedges = [row["raw"] for row in candidates]
+    raw_hyperedge = raw_hyperedges[0] if raw_hyperedges else None
+    if raw_hyperedge is not None:
+        raw_id = text_or_none(raw_hyperedge.get("hyperedge_id")) or raw_id
+    else:
+        unresolved["hyperedge_ids"] = [raw_id]
+
+    def references(rows: Sequence[Mapping[str, Any]], *keys: str) -> list[str]:
+        return unique_texts(*(row.get(key) for row in rows for key in keys))
+
+    def resolve(
+        kind: str, ids: Sequence[str], issues: dict[str, Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        issues = unresolved if issues is None else issues
+        found, missing = [], []
+        for record_id in ids:
+            variants = [row for row in records(kind, record_id) if in_scope(row)]
+            if variants:
+                found.extend(variants)
+                if len({row["provenance"]["source_id"] for row in variants}) > 1:
+                    issues["conflicts"].append({
+                        "entity_type": kind, "doc_id": doc_id, "id": record_id,
+                        "reason": "ambiguous_source",
+                        "variants": [full_record_result(row, kind, "ambiguous_source") for row in variants],
+                    })
+            else:
+                missing.append(record_id)
+        return found, missing
+
+    direct_fact_ids = references([metadata, *raw_hyperedges], "fact_ids")
+    facts, unresolved["fact_ids"] = resolve("facts", direct_fact_ids)
+    direct_facts_found = len(direct_fact_ids) - len(unresolved["fact_ids"])
+    fact_modes = {id(row): "fact_ids" for row in facts}
+    source_ids = set(unique_texts(raw_id, object_id.rsplit("::", 1)[-1], object_id,
+                                  *(raw.get("hyperedge_id") for raw in raw_hyperedges)))
+    doc_facts = [row for row in store.full_records_by_doc.get(("facts", doc_id or ""), [])
+                 if db_row and in_scope(row)]
+    for row in doc_facts:
+        if source_ids.intersection(unique_texts(row["raw"].get("source_hyperedge_id"))) and id(row) not in fact_modes:
+            facts.append(row)
+            fact_modes[id(row)] = "source_hyperedge_id"
+    core_keys = {(row["provenance"]["source_id"], row["id"]) for row in facts if row["id"]}
+    for row in doc_facts:
+        if (row["provenance"]["source_id"], row["id"]) in core_keys and id(row) not in fact_modes:
+            facts.append(row)
+            fact_modes[id(row)] = "conflicting_id"
+    report_conflicts("facts", facts)
+
+    context_ids = set(references([metadata, *raw_hyperedges], "context_id"))
+    context_candidates = [row for row in doc_facts if id(row) not in fact_modes
+                          and context_ids.intersection(unique_texts(row["raw"].get("context_id")))]
+    context_limit = max(max_context_facts, 0)
+    context_facts = context_candidates[:context_limit]
+    context_selected_count = len(context_facts)
+    # Report conflicts even if a supplementary limit would hide a conflicting variant.
+    context_keys = {(row["provenance"]["source_id"], row["id"]) for row in context_facts if row["id"]}
+    report_conflicts("facts", [row for row in doc_facts
+                               if (row["provenance"]["source_id"], row["id"]) in context_keys],
+                     supplementary_unresolved)
+
+    evidence_ids = references([metadata, *raw_hyperedges, *(row["raw"] for row in facts)],
+                              "evidence_ids", "evidence_id")
+    evidence, unresolved["evidence_ids"] = resolve("evidence", evidence_ids)
+    report_conflicts("evidence", evidence)
+    context_evidence_ids = [value for value in references([row["raw"] for row in context_facts],
+                                                         "evidence_ids", "evidence_id")
+                            if value not in evidence_ids]
+    context_evidence, supplementary_unresolved["context_evidence_ids"] = resolve(
+        "evidence", context_evidence_ids, supplementary_unresolved,
+    )
+    report_conflicts("evidence", context_evidence, supplementary_unresolved)
+    context_evidence_found = len(context_evidence)
+
+    # Supplementary failures must not invalidate direct evidence or enter verified context.
+    all_conflicts = [*unresolved["conflicts"], *supplementary_unresolved["conflicts"]]
+    unsafe_fact_ids = {issue["id"] for issue in all_conflicts if issue["entity_type"] == "facts"}
+    unsafe_evidence_ids = {
+        *unresolved["evidence_ids"], *supplementary_unresolved["context_evidence_ids"],
+        *(issue["id"] for issue in all_conflicts if issue["entity_type"] == "evidence"),
+    }
+    safe_context_facts = []
+    for row in context_facts:
+        support_ids = references([row["raw"]], "evidence_ids", "evidence_id")
+        unsafe_support = [value for value in support_ids if value in unsafe_evidence_ids]
+        reason = (
+            "conflicting_fact_id" if row["id"] in unsafe_fact_ids else
+            "missing_evidence_binding" if not support_ids else
+            "unresolved_evidence" if unsafe_support else None
+        )
+        if reason:
+            supplementary_unresolved["dropped_context_facts"].append({
+                "fact_id": row["id"], "provenance": row["provenance"], "reason": reason,
+                "evidence_ids": unsafe_support,
+            })
+        else:
+            safe_context_facts.append(row)
+    context_facts = safe_context_facts
+    supplementary_unresolved["context_fact_ids"] = unique_texts(
+        [row["fact_id"] for row in supplementary_unresolved["dropped_context_facts"]],
+    )
+    retained_context_evidence_ids = set(references([row["raw"] for row in context_facts],
+                                                 "evidence_ids", "evidence_id"))
+    context_evidence = [row for row in context_evidence if row["id"] in retained_context_evidence_ids
+                        and row["id"] not in unsafe_evidence_ids]
+
+    profile_available_count = 0
+    for kind in ("patent", "patent_profile"):
+        issues = supplementary_unresolved if kind == "patent_profile" else unresolved
+        rows, _ = resolve(kind, [doc_id] if doc_id else [], issues)
+        report_conflicts(kind, rows, issues)
+        if not rows:
+            issues[f"{kind}_doc_ids"] = [doc_id] if doc_id else []
+        if kind == "patent_profile":
+            profile_available_count = len(rows)
+            if any(issue["entity_type"] == kind for issue in issues["conflicts"]):
+                rows = []
+        result[kind] = {"found": bool(rows), "raw": rows[0]["raw"] if rows else None,
+                        "provenance": rows[0]["provenance"] if rows else None}
+
+    result.update({
+        "doc_id": doc_id, "db_hyperedge": {**db_row, "metadata": metadata} if db_row else None,
+        "hyperedge": {"found": raw_hyperedge is not None, "raw_hyperedge_id": raw_id,
+                      "raw": raw_hyperedge, "provenance": candidates[0]["provenance"] if candidates else None},
+        "facts": [full_record_result(row, "facts", fact_modes[id(row)]) for row in facts],
+        "evidence": [full_record_result(row, "evidence", "evidence_ids") for row in evidence],
+        "context_facts": [full_record_result(row, "facts", "context_id") for row in context_facts],
+        "context_evidence": [full_record_result(row, "evidence", "context_fact_evidence_ids") for row in context_evidence],
+        "unresolved": unresolved,
+        "supplementary_unresolved": supplementary_unresolved,
+        "coverage": {
+            "complete": not any(unresolved.values()),
+            "direct_complete": not any(unresolved.values()),
+            "supplementary_complete": not any(supplementary_unresolved.values())
+                                      and len(context_candidates) == len(context_facts),
+            "db_found": db_row is not None, "hyperedge_found": raw_hyperedge is not None,
+            "patent_found": result["patent"]["found"], "patent_profile_found": result["patent_profile"]["found"],
+            "facts": {"referenced": len(direct_fact_ids), "resolved": direct_facts_found,
+                      "missing": len(unresolved["fact_ids"]), "returned": len(facts),
+                      "source_linked": sum(mode == "source_hyperedge_id" for mode in fact_modes.values())},
+            "evidence": {"referenced": len(evidence_ids), "resolved": len(evidence_ids) - len(unresolved["evidence_ids"]),
+                         "missing": len(unresolved["evidence_ids"]), "returned": len(evidence)},
+            "context_facts": {"available": len(context_candidates), "selected": context_selected_count,
+                              "returned": len(context_facts), "dropped": context_selected_count - len(context_facts),
+                              "limit": context_limit, "truncated": len(context_candidates) > context_selected_count},
+            "context_evidence": {"referenced": len(context_evidence_ids), "available": context_evidence_found,
+                                 "returned": len(context_evidence), "dropped": context_evidence_found - len(context_evidence),
+                                 "missing": len(supplementary_unresolved["context_evidence_ids"])},
+            "patent_profile": {"available": profile_available_count, "returned": int(result["patent_profile"]["found"]),
+                               "dropped": profile_available_count - int(result["patent_profile"]["found"]),
+                               "missing": len(supplementary_unresolved["patent_profile_doc_ids"])},
+            "conflict_count": len(unresolved["conflicts"]),
+            "supplementary_conflict_count": len(supplementary_unresolved["conflicts"]),
+        },
+    })
+    return result
 
 
 def empty_result(object_id: str) -> dict[str, Any]:

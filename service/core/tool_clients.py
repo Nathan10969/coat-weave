@@ -26,11 +26,13 @@ def kg_expand_hyperedge_multihop(
     *,
     max_context_facts: int = 20,
     max_evidence_per_item: int = 5,
+    evidence_mode: str = "full",
 ) -> dict[str, Any]:
     body = {
         "object_ids": object_ids,
         "max_context_facts": max_context_facts,
         "max_evidence_per_item": max_evidence_per_item,
+        "evidence_mode": evidence_mode,
     }
     headers = {
         "Content-Type": "application/json",

@@ -1,11 +1,22 @@
 {
   "version": "1.0",
+  "retrieval_policy": {
+    "candidate_k": 100,
+    "top_k": 50,
+    "expand_top_k": 30
+  },
   "tools": {
     "kg.hybrid_search": {
       "parameters": {
         "query": {
           "type": "string",
           "required": true
+        },
+        "result_mode": {
+          "type": "string",
+          "enum": ["candidates", "evidence"],
+          "default": "evidence",
+          "description": "Use candidates when the user requests only candidate listings or no evidence expansion; use evidence for facts and supporting evidence. This controls orchestration only; retrieval budgets are service-managed."
         },
         "top_k": {
           "type": "integer",

@@ -5,14 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/coat-weave/service
-EnvironmentFile=/opt/coat-weave/service/.env
-ExecStart=/opt/coat-weave/.venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8031
+WorkingDirectory=/root/coating/coating_api_service
+EnvironmentFile=/root/coating/coating_api_service/.env
+ExecStart=/root/coating/envs/coating/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8031
 Restart=always
 RestartSec=3
 KillSignal=SIGINT
 TimeoutStopSec=30
-User=coatweave
+User=root
 
 [Install]
 WantedBy=multi-user.target

@@ -4,6 +4,14 @@ import copy
 import json
 import os
 import time
+import http.client
+import socket
+import threading
+import queue
+import re
+from contextlib import contextmanager
+import evidence_packet as evidence_delivery
+import answer_selection
 import urllib.error
 import urllib.request
 from typing import Any, Iterator
@@ -40,11 +48,14 @@ def gate_tool_observations_for_answer(observations: Any) -> list[dict[str, Any]]
         if not isinstance(result, dict):
             continue
         tool = observation.get("tool")
-        if tool == "kg.hybrid_search":
+        if tool in {"kg.hybrid_search", "kg.doc_field_scan"}:
             for item in result.get("items") or []:
                 if isinstance(item, dict):
                     item.pop("text_preview", None)
                     item.pop("metadata", None)
+                    if tool == "kg.doc_field_scan":
+                        for key in ("facts", "evidence", "materials", "result", "test_condition", "baseline"):
+                            item.pop(key, None)
             result["evidence_gate"] = {"status": "candidate_only"}
             continue
         if tool != "kg.expand_hyperedge_multihop":
@@ -52,6 +63,10 @@ def gate_tool_observations_for_answer(observations: Any) -> list[dict[str, Any]]
         wrapper_status = str(observation.get("status") or "").strip().casefold()
         result_status = str(result.get("status") or "").strip().casefold()
         if wrapper_status != "ok" or result_status not in {"ok", "partial"}:
+            result["failed_objects"] = list(result.get("failed_objects") or []) + [
+                {"object_id": item.get("object_id"), "reason": f"expand_status:{wrapper_status}/{result_status}"}
+                for item in result.get("items") or [] if isinstance(item, dict)
+            ]
             result["items"] = []
             result["evidence_gate"] = {
                 "status": "blocked",
@@ -61,6 +76,11 @@ def gate_tool_observations_for_answer(observations: Any) -> list[dict[str, Any]]
             continue
         items = result.get("items") if isinstance(result.get("items"), list) else []
         verified = [item for item in items if _expanded_item_is_verified(item)]
+        excluded = [{"object_id": item.get("object_id"), "reason": "incomplete_expansion",
+                     "unresolved": copy.deepcopy(item.get("unresolved") or {})}
+                    for item in items if isinstance(item, dict) and not _expanded_item_is_verified(item)]
+        if excluded:
+            result["failed_objects"] = list(result.get("failed_objects") or []) + excluded
         if not verified:
             result["items"] = []
             result["evidence_gate"] = {
@@ -129,7 +149,8 @@ def provider_config() -> dict[str, Any]:
         or ("anthropic" if "/anthropic" in base_url.lower() else "openai")
     ).strip().lower()
     context_window_tokens = int(os.environ.get("LLM_CONTEXT_WINDOW_TOKENS") or os.environ.get("QWEN_CONTEXT_WINDOW_TOKENS", "1000000"))
-    max_output_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS") or os.environ.get("QWEN_MAX_OUTPUT_TOKENS", "65536"))
+    default_output_tokens = 131072 if model.startswith("qwen3.8-max") else 65536
+    max_output_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS") or os.environ.get("QWEN_MAX_OUTPUT_TOKENS") or default_output_tokens)
     stream_chunk_chars = int(os.environ.get("LLM_STREAM_CHUNK_CHARS", "4"))
     stream_read_timeout_seconds = _int_env("LLM_STREAM_READ_TIMEOUT_SECONDS", 60)
     stream_first_token_timeout_seconds = _int_env("LLM_STREAM_FIRST_TOKEN_TIMEOUT_SECONDS", 45)
@@ -191,9 +212,9 @@ def stream_timeout_customer_message(reason: str, *, had_content: bool) -> str:
     return f"模型流式响应因{label}中止，没有收到可用内容。可以稍后重试或换一个更窄的问题。"
 
 
-def set_response_socket_timeout(response: Any, seconds: int) -> None:
+def set_response_socket_timeout(response: Any, seconds: float) -> None:
     try:
-        response.fp.raw._sock.settimeout(max(1, int(seconds)))
+        response.fp.raw._sock.settimeout(max(.01, seconds))
     except (AttributeError, OSError):
         return
 
@@ -479,6 +500,12 @@ def _compact_current_tool_observation(observation: Any) -> dict[str, Any]:
         return {}
     copied = copy.deepcopy(observation)
     result = copied.get("result") if isinstance(copied.get("result"), dict) else {}
+    # Expanded records and aggregate dimensions are semantic input, not previews.
+    if copied.get("tool") != "kg.hybrid_search":
+        if result.get("exact_items") == result.get("items"):
+            result.pop("exact_items", None)
+        copied["result"] = result
+        return copied
     compact_items: list[dict[str, Any]] = []
     for item in result.get("items") or []:
         if not isinstance(item, dict):
@@ -504,8 +531,9 @@ def _compact_current_tool_observation(observation: Any) -> dict[str, Any]:
             kept["evidence"] = evidence[:5]
         compact_items.append(kept)
     result["items"] = compact_items
-    if "exact_items" in result or compact_items:
-        result["exact_items"] = compact_items
+    if "exact_items" in result:
+        exact_ids = {str(row.get("object_id")) for row in result["exact_items"]}
+        result["exact_items"] = [row for row in compact_items if str(row.get("object_id")) in exact_ids]
     compact_adjacent: list[dict[str, Any]] = []
     for row in result.get("adjacent_items") or []:
         if not isinstance(row, dict):
@@ -532,8 +560,14 @@ def _compact_current_tool_observation(observation: Any) -> dict[str, Any]:
 
 
 def compact_packet_for_answer(packet: dict[str, Any], max_bytes: int | None = None) -> dict[str, Any]:
-    budget = max_bytes or _int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024)
+    budget = _int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024) if max_bytes is None else max_bytes
+    if budget < 0:
+        raise ValueError("packet byte budget must be nonnegative")
     projected = project_model_packet(packet)
+    count_statements = aggregate_count_statements(projected)
+    if count_statements:
+        projected["authoritative_count_statements"] = count_statements
+    projected["tool_observations"] = gate_tool_observations_for_answer(projected.get("tool_observations"))
     projected["recent_turns"] = [
         {**turn, "content": str(turn.get("content") or "")[:1200]}
         for turn in (projected.get("recent_turns") or [])[-3:]
@@ -548,16 +582,8 @@ def compact_packet_for_answer(packet: dict[str, Any], max_bytes: int | None = No
     projected["tool_observations"] = [
         _compact_current_tool_observation(item) for item in projected.get("tool_observations") or []
     ]
-    while _json_size(projected) > budget:
-        candidates = [
-            observation.get("result", {}).get("items", [])
-            for observation in projected.get("tool_observations") or []
-            if isinstance(observation, dict) and isinstance(observation.get("result"), dict)
-        ]
-        largest = max(candidates, key=len, default=[])
-        if largest:
-            largest.pop()
-            continue
+    projected = evidence_delivery.pack_evidence(projected)
+    while budget > 0 and evidence_delivery.json_size(projected) > budget:
         removed = False
         for section in ("recent_tool_observations", "recent_observations", "tool_routing_decisions", "recent_turns"):
             rows = projected.get(section)
@@ -575,6 +601,7 @@ def build_model_messages(
     packet: dict[str, Any],
     *,
     max_packet_bytes: int | None = None,
+    _prepared: bool = False,
 ) -> list[dict[str, str]]:
     system = (
         "你是一个项目对话记忆助手。你会收到 Dialogue Memory Packet 和用户当前问题。"
@@ -616,9 +643,16 @@ def build_model_messages(
         "preserve any useful supported result, and reuse the same receipt if the user repeats the request. "
         "requested_filters are what was asked, effective_filters are what was actually applied, and route_adjustments "
         "must never be hidden.\n"
-        "RESPECT THE COUNT THE USER ASKED FOR. If the user says \"给我一个/一篇/一种\" (one), present exactly ONE "
-        "(the most representative) in full detail, then add at most one short line like \"库里还有 N 个相关的,需要可以继续\". "
-        "Do not dump multiple full formulations when the user asked for one. If the user asks \"多少片/几篇\" (how many "
+        "RESPECT THE COUNT THE USER ASKED FOR. When no display count is specified, show up to three distinct samples. "
+        "When the user asks for one, focus on one; this does not reduce the evidence reviewed. Honor other explicit "
+        "counts subject to verified evidence. Identify samples by source, patent and sample_id, falling back to context_id. "
+        "Multiple performance hyperedges of one sample are not multiple formulations. Performance-only or system-only "
+        "records must be labeled as such, not presented as complete formulations. Explain insufficient coverage without "
+        "inventing missing samples. This run organizes evidence, not a systematic cross-formulation comparison. "
+        "facts_refs and evidence_refs resolve into the source_records registries; use their full records and quotes. "
+        "Preserve amounts, units, controls and test conditions; missing data remains unknown. "
+        "evidence_delivery lists excluded or unprocessed objects; never claim those were fully reviewed. "
+        "If the user asks \"多少片/几篇\" (how many "
         "patents) answer with the patent COUNT (doc_id count), not the formulation count, and do not silently switch the "
         "counting unit. Keep the answered unit consistent with what the user counted.\n"
         "If tool_observations include kg.sql_aggregate, treat it as the only authoritative source for statistical "
@@ -672,11 +706,11 @@ def build_model_messages(
         "If evidence_gate.status=verified and partial=true, the retained items are usable verified evidence: answer from "
         "those items and briefly disclose that excluded_count incomplete candidates were omitted; never describe the whole "
         "expansion as failed.\n"
-        "If tool_observations include kg.doc_field_scan, treat it as the authoritative source for doc-scoped "
-        "field lookup inside active_scope.doc_ids. Use items[].test_method, items[].test_condition, items[].result, "
-        "items[].facts, and items[].evidence for the answer. If it returns empty with hyperedges_scanned>0, say the requested field was not "
-        "found in the scoped patent evidence; do not broaden to other patents. If it returns empty with hyperedges_scanned=0, "
-        "treat patent presence in the live structured KG as unverified/missing, not as a field-level negative result.\n"
+        "kg.doc_field_scan is a doc-scoped candidate locator, not full evidence. Only its following verified "
+        "kg.expand_hyperedge_multihop records support formulation, page, test and result claims. "
+        "Missing fields in scan previews do not prove missing source data. If expansion fails, report that "
+        "coverage was not verified, never claim the patent has no formulation or measured values. "
+        "A field scan returning empty must not broaden the active patent scope.\n"
         "If the current user message is a short follow-up or scope phrase (for example 只看这篇, 重新, 需要啊) "
         "and the current tool_observations include a result.query that expands the prior user intent, treat that "
         "result.query as the effective expanded tool query and answer the tool result directly. In this case, "
@@ -851,16 +885,13 @@ ISO 12944相关判断必须结合基材、表面处理、涂层体系、干膜�
 
 面向工程师，优先给结论、依据、风险和验证路径，不做与问题无关的背景铺垫。
 """
-    count_statements = aggregate_count_statements(packet)
-    if count_statements:
-        packet = {**packet, "authoritative_count_statements": count_statements}
-    packet = compact_packet_for_answer(packet, max_packet_bytes)
+    packet = copy.deepcopy(packet) if _prepared else compact_packet_for_answer(packet, max_packet_bytes)
     return [
         {"role": "system", "content": system},
         {
             "role": "user",
             "content": "Dialogue Memory Packet:\n"
-            + json.dumps(packet, ensure_ascii=False)
+            + json.dumps(packet, ensure_ascii=False, separators=(",", ":"))
             + "\n\nCurrent user message:\n"
             + question,
         },
@@ -954,8 +985,42 @@ def sanitize_customer_answer(answer: str) -> str:
     return text
 
 
-def structured_tool_fallback_answer(packet: dict[str, Any]) -> str:
-    observations = packet.get("tool_observations") if isinstance(packet, dict) else []
+def _display_limit(question: str) -> int:
+    """Read an explicit display quantity only; never changes retrieval or filters."""
+    match = re.search(r"(?:给我|提供|展示|列出|列|give(?: me)?|show|list)\s*(\d+|one|two|three|一|两|二|三|四|五|六|七|八|九|十)(?![一二三四五六七八九十百])", question, re.IGNORECASE)
+    if not match:
+        return 3
+    value = match.group(1).casefold()
+    words = {"one": 1, "two": 2, "three": 3, "一": 1, "两": 2, "二": 2, "三": 3,
+             "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    return max(1, min(int(value) if value.isdigit() else words[value], 30))
+
+
+def _display_groups(rows: list[dict], limit: int, *, summaries: bool = False) -> list[list[dict]]:
+    groups: dict[tuple, list] = {}
+    for row in rows:
+        key = tuple(row["sample_key"]) if summaries else evidence_delivery.sample_key(row)
+        groups.setdefault(key, []).append(row)
+    return list(groups.values())[:limit]
+
+
+def structured_tool_fallback_answer(packet: dict[str, Any], question: str = "") -> str:
+    prepared = compact_packet_for_answer(packet)
+    observations = prepared.get("tool_observations") or []
+    for observation in observations:
+        if observation.get("tool") == "kg.expand_hyperedge_multihop":
+            for item in observation.get("result", {}).get("items", []):
+                for kind in ("facts", "evidence"):
+                    item[kind] = [prepared["source_records"][kind][ref] for ref in item.get(kind + "_refs", [])]
+    verified = [item for observation in observations or [] if observation.get("tool") == "kg.expand_hyperedge_multihop"
+                for item in observation.get("result", {}).get("items", []) if _expanded_item_is_verified(item)]
+    if verified:
+        lines = ["回答模型未完成，但以下原始结构化记录已成功展开；这是证据回退结果，不是完整分析："]
+        for group in _display_groups(verified, _display_limit(question)):
+            identity = evidence_delivery.sample_key(group[0])
+            lines.append(f"\n{group[0].get('doc_id')} / {identity[-1]}（按样品合并的原始记录，完整配方覆盖需核对字段）：")
+            lines.append(json.dumps([{k: item[k] for k in ("hyperedge_summary", "facts", "evidence") if k in item} for item in group], ensure_ascii=False))
+        return "\n".join(lines) + _coverage_note(prepared.get("evidence_delivery") or {})
     for observation in reversed(observations or []):
         if not isinstance(observation, dict):
             continue
@@ -1009,13 +1074,18 @@ def structured_tool_fallback_answer(packet: dict[str, Any]) -> str:
 
 
 def retry_compact_answer(question: str, packet: dict[str, Any], cfg: dict[str, Any]) -> str:
-    retry_budget = _int_env("LLM_MODEL_PACKET_RETRY_MAX_BYTES", 256 * 1024)
+    # Retained entrypoint for older callers; retry never removes current evidence.
+    return _request_complete_text(build_model_messages(question, packet), cfg)
+
+
+def _request_complete_text(messages: list[dict[str, str]], cfg: dict[str, Any], *, deadline: float | None = None) -> str:
+    started = time.monotonic()
+    stop = min(deadline or float("inf"), started + int(cfg.get("stream_total_timeout_seconds") or 180))
+    remaining = stop - started
+    if remaining <= 0:
+        raise TimeoutError("batch_deadline")
     body = build_provider_body(
-        cfg,
-        build_model_messages(question, packet, max_packet_bytes=retry_budget),
-        temperature=0.2,
-        max_tokens=cfg["max_output_tokens"],
-        stream=False,
+        cfg, messages, temperature=0.2, max_tokens=cfg["max_output_tokens"], stream=True,
     )
     req = urllib.request.Request(
         provider_messages_url(cfg),
@@ -1023,9 +1093,344 @@ def retry_compact_answer(question: str, packet: dict[str, Any], cfg: dict[str, A
         headers=provider_headers(cfg),
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=max(1, int(cfg.get("stream_read_timeout_seconds") or 60))) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-    return sanitize_customer_answer(extract_provider_text(payload, cfg))
+    content, plain = [], []
+    complete = False
+    first_deadline = min(stop, started + int(cfg.get("stream_first_token_timeout_seconds") or 45))
+    with _open_provider_response(req, first_deadline) as resp:
+        timer = _response_deadline_timer(resp, first_deadline)
+        try:
+            for raw_line in resp:
+                now = time.monotonic()
+                if now >= stop or (not content and now >= first_deadline):
+                    raise TimeoutError("provider_deadline")
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if line == "data: [DONE]":
+                    complete = True
+                    break
+                if line.startswith("data:"):
+                    data = json.loads(line[5:].strip())
+                    complete = _provider_completed(data) or complete
+                    delta = extract_stream_delta_text(data, cfg)
+                    if delta:
+                        if not content:
+                            timer.cancel()
+                            timer = _response_deadline_timer(resp, stop)
+                        content.append(delta)
+                elif line and not line.startswith((":", "event:")):
+                    plain.append(line)
+                next_stop = stop if content else first_deadline
+                set_response_socket_timeout(resp, min(float(cfg.get("stream_read_timeout_seconds") or 60), next_stop - time.monotonic()))
+        finally:
+            timer.cancel()
+    if time.monotonic() >= stop:
+        raise TimeoutError("provider_deadline")
+    if not content and plain:
+        payload = json.loads("\n".join(plain))
+        _provider_completed(payload)
+        content = [extract_provider_text(payload, cfg)]
+        complete = True
+    if content and not complete:
+        raise http.client.IncompleteRead(b"", None)
+    answer = "".join(content).strip()
+    if not answer:
+        raise ValueError("empty_provider_answer")
+    return answer
+
+
+@contextmanager
+def _open_provider_response(request: urllib.request.Request, header_deadline: float):
+    """Cancel the actual connection while HTTP headers are still being read."""
+    connections = []
+    expired = threading.Event()
+
+    def cancel():
+        expired.set()
+        for connection in connections:
+            for sock in (connection.sock, getattr(connection, "deadline_socket", None)):
+                if sock is not None:
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+    def factory(base):
+        def create(*args, **kwargs):
+            connection = base(*args, **kwargs)
+            connections.append(connection)
+            def connect_before_deadline(address, timeout=None, source_address=None):
+                if expired.is_set():
+                    raise TimeoutError("provider_header_deadline")
+                resolved = queue.Queue(maxsize=1)
+                # OS DNS cannot be cancelled; the read-only daemon cannot open a
+                # late connection. Only this deadline-bound caller connects.
+                def resolve():
+                    try:
+                        resolved.put((socket.getaddrinfo(*address, 0, socket.SOCK_STREAM), None))
+                    except Exception as exc:
+                        resolved.put((None, exc))
+                threading.Thread(target=resolve, daemon=True).start()
+                try:
+                    addresses, error = resolved.get(timeout=max(.001, header_deadline - time.monotonic()))
+                except queue.Empty:
+                    raise TimeoutError("provider_dns_deadline") from None
+                if error:
+                    raise error
+                last_error = OSError("DNS returned no connection addresses")
+                for family, kind, proto, _, endpoint in addresses:
+                    if expired.is_set() or time.monotonic() >= header_deadline:
+                        raise TimeoutError("provider_header_deadline")
+                    sock = socket.socket(family, kind, proto)
+                    connection.deadline_socket = sock
+                    try:
+                        sock.settimeout(max(.001, header_deadline - time.monotonic()))
+                        if source_address:
+                            sock.bind(source_address)
+                        sock.connect(endpoint)
+                        if expired.is_set() or time.monotonic() >= header_deadline:
+                            raise TimeoutError("provider_header_deadline")
+                        sock.settimeout(max(.001, header_deadline - time.monotonic()))
+                        return sock
+                    except OSError as exc:
+                        sock.close()
+                        last_error = exc
+                raise last_error
+            connection._create_connection = connect_before_deadline
+            return connection
+        return create
+
+    class HTTP(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(factory(http.client.HTTPConnection), req)
+
+    class HTTPS(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(factory(http.client.HTTPSConnection), req, context=self._context)
+
+    timer = threading.Timer(max(.001, header_deadline - time.monotonic()), cancel)
+    timer.daemon = True
+    timer.start()
+    response = None
+    try:
+        response = urllib.request.build_opener(HTTP(), HTTPS()).open(request, timeout=max(.001, header_deadline - time.monotonic()))
+        timer.cancel()
+        if expired.is_set() or time.monotonic() >= header_deadline:
+            raise TimeoutError("provider_header_deadline")
+        yield response
+    finally:
+        timer.cancel()
+        if response is not None:
+            response.close()
+
+
+def _provider_completed(payload: dict[str, Any]) -> bool:
+    reasons = [choice.get("finish_reason") for choice in payload.get("choices") or []]
+    reasons += [payload.get("stop_reason"), (payload.get("delta") or {}).get("stop_reason")]
+    if any(reason in {"length", "max_tokens", "content_filter"} for reason in reasons):
+        raise ValueError("provider_incomplete_termination")
+    return payload.get("type") == "message_stop" or any(reason in {"stop", "end_turn", "stop_sequence"} for reason in reasons)
+
+
+def _response_deadline_timer(response: Any, deadline: float) -> threading.Timer:
+    # A read timeout is idle-only; shutdown also interrupts a slowly dripped line.
+    def interrupt_read():
+        try:
+            response.fp.raw._sock.shutdown(socket.SHUT_RDWR)
+        except (AttributeError, OSError):
+            pass
+    timer = threading.Timer(max(.001, deadline - time.monotonic()), interrupt_read)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def _validate_batch_summary(text: str, batch: dict[str, Any], reference_aliases: dict | None = None) -> list[dict[str, Any]]:
+    payload = json.loads(text)
+    rows = payload.get("summaries") if isinstance(payload, dict) else None
+    expected = {str(i["object_id"]): i for i in evidence_delivery.expanded_items(batch)}
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        raise ValueError("summary_coverage_mismatch")
+    found = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("object_id") not in expected or row["object_id"] in found:
+            raise ValueError("summary_object_mismatch")
+        source = expected[row["object_id"]]
+        if not isinstance(row.get("summary"), str) or not row["summary"].strip():
+            raise ValueError("empty_sample_summary")
+        for kind in ("facts", "evidence"):
+            refs = row.get(kind + "_refs")
+            if reference_aliases and isinstance(refs, list) and all(isinstance(ref, str) for ref in refs):
+                row[kind + "_refs"] = refs = [reference_aliases[kind].get(ref, ref) for ref in refs]
+            if not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in source.get(kind + "_refs", []) for ref in refs):
+                raise ValueError("summary_reference_mismatch")
+            if set(refs) != set(source.get(kind + "_refs") or []):
+                raise ValueError("summary_incomplete_reference_coverage")
+        # Identity is copied from the actual source, not trusted to the model.
+        row["sample_key"] = list(evidence_delivery.sample_key(source))
+        row["doc_id"] = source.get("doc_id")
+        row["validation"] = "reference_coverage_only_not_independent_semantic_verification"
+        if reference_aliases:
+            row["reference_aliases"] = {kind: {short: ref for short, ref in mapping.items()
+                                               if ref in row.get(kind + "_refs", [])}
+                                        for kind, mapping in reference_aliases.items()}
+        found.add(row["object_id"])
+    return rows
+
+
+def _coverage_note(receipt: dict[str, Any]) -> str:
+    failed = receipt.get("failed_objects") or []
+    if not failed:
+        return ""
+    listing = "；".join(f"{r.get('object_id') or '上下文'}（{r['reason']}）" for r in failed)
+    return "\n\n本轮未完整覆盖以下记录，不将其作为已验证结论：" + listing + "。"
+
+
+def _selected_evidence_answer(question: str, prepared: dict[str, Any], cfg: dict[str, Any],
+                              choices: dict, *, deadline: float | None = None, source_packet: dict | None = None) -> tuple[str, dict]:
+    limit = _display_limit(question)
+    model_packet = copy.deepcopy(prepared)
+    model_packet["answer_selection_catalog"] = choices
+    messages = build_model_messages(question, model_packet, _prepared=True)
+    messages[0]["content"] += answer_selection.instructions(limit)
+    receipt = {"display_limit": limit, "available_samples": len(choices), "attempts": 0,
+               "displayed_samples": 0, "selected_samples": [], "validation_failures": []}
+    if not choices:
+        receipt["answer_outcome"] = "selection_fallback"
+        return answer_selection.fallback(choices, limit), receipt
+    try:
+        source = source_packet if source_packet is not None else prepared
+        views = answer_selection.attach_source_views(choices, source)
+    except (ValueError, KeyError, TypeError) as exc:
+        receipt.update(answer_outcome="source_binding_failure", failure_reason=type(exc).__name__)
+        return answer_selection.fallback({}, limit), receipt
+    for attempt in range(2):
+        if deadline is not None and time.monotonic() >= deadline:
+            receipt["validation_failures"].append("batch_deadline")
+            break
+        receipt["attempts"] += 1
+        try:
+            text = _request_complete_text(messages, cfg, deadline=deadline)
+            payload = answer_selection.validate(text, choices, limit)
+            receipt.update(answer_outcome="model_complete", displayed_samples=len(payload["selected_samples"]),
+                selection_coverage_note=payload.get("coverage_note", ""),
+                selected_samples=[{"handle": row["sample_handle"], **choices[row["sample_handle"]]}
+                                  for row in payload["selected_samples"]],
+                validation="sample_identity_and_reference_binding_not_semantic_entailment")
+            receipt["render_mode"] = "source_fields_and_verbatim_evidence_not_model_quantitative_paraphrase"
+            return answer_selection.render(payload, choices, views), receipt
+        except (ValueError, KeyError, TypeError, OSError, http.client.HTTPException) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code in (400, 413, 422):
+                try:
+                    provider_error = exc.read(4096).decode("utf-8", "replace").casefold()
+                finally:
+                    exc.close()
+                if exc.code == 413 or any(code in provider_error for code in (
+                    "context_length_exceeded", "maximum context length", "context window", "input length", "input tokens")):
+                    receipt.update(answer_outcome="provider_context_exceeded")
+                    return "", receipt
+            error = type(exc).__name__ + ":" + str(exc)[:160]
+            receipt["validation_failures"].append(error)
+            if attempt == 0:
+                # Keep the entire original input; do not replay invalid model prose.
+                messages.append({"role": "user", "content": "Answer validation failed: " + error +
+                    ". Return a corrected JSON answer using the same full evidence and catalog. No new evidence was added."})
+    receipt["answer_outcome"] = "selection_fallback"
+    return answer_selection.fallback(choices, limit), receipt
+
+
+def _stream_selected_answer(question: str, prepared: dict[str, Any], cfg: dict[str, Any], diag_request_id=None):
+    started = time.monotonic()
+    yield {"type": "progress", "stage": "sample_selection", "completed": 0}
+    choices = answer_selection.catalog(prepared)
+    answer, selection = _selected_evidence_answer(question, prepared, cfg, choices,
+        deadline=started + _int_env("LLM_EVIDENCE_BATCH_TOTAL_SECONDS", 600))
+    if selection["answer_outcome"] == "provider_context_exceeded":
+        # A provider token rejection triggers whole-sample batching, not deletion.
+        budget = _int_env("LLM_CONTEXT_REJECT_BATCH_BYTES", 512 * 1024)
+        plan = evidence_delivery.plan_batches(prepared, max(1, budget), output_tokens=cfg["max_output_tokens"])
+        plan["requires_batching"] = True
+        yield from _stream_batched_answer(question, prepared, plan, cfg, diag_request_id,
+            deadline=started + _int_env("LLM_EVIDENCE_BATCH_TOTAL_SECONDS", 600), budget_override=max(1, budget))
+        return
+    receipt = copy.deepcopy(prepared.get("evidence_delivery") or {})
+    receipt.update(selection)
+    receipt.update(packet_bytes=evidence_delivery.json_size(prepared), batch_count=1,
+        submitted_objects=[row["object_id"] for row in evidence_delivery.expanded_items(prepared)],
+        elapsed_seconds=round(time.monotonic() - started, 3))
+    StreamDiagnostics(request_id=diag_request_id, conversation_id="", layer="core.answering.selection").event(
+        "evidence_delivery_complete", **receipt)
+    provider = provider_label(cfg) if selection["answer_outcome"] == "model_complete" else "structured-tool-fallback"
+    yield {"type": "delta", "content": sanitize_customer_answer(answer) + _coverage_note(receipt), "provider": provider, "model": cfg["model"]}
+    yield {"type": "done", "provider": provider, "model": cfg["model"], "evidence_delivery": receipt}
+
+
+def _stream_batched_answer(question: str, prepared: dict[str, Any], plan: dict[str, Any], cfg: dict[str, Any], diag_request_id: str | None = None,
+                           *, deadline: float | None = None, budget_override: int | None = None):
+    started = time.monotonic()
+    deadline = deadline if deadline is not None else started + _int_env("LLM_EVIDENCE_BATCH_TOTAL_SECONDS", 600)
+    budget = budget_override if budget_override is not None else _int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024)
+    receipt = copy.deepcopy(prepared.get("evidence_delivery") or {})
+    receipt.update({"failed_objects": copy.deepcopy(plan["failed_objects"]), "batches": [], "covered_objects": []})
+    summaries = []
+    diag = StreamDiagnostics(request_id=diag_request_id, conversation_id="", layer="core.answering.evidence_batches")
+    instructions = (
+        "This is one evidence batch, not a final customer answer. Read every supplied item and return JSON only: "
+        '{"summaries":[{"object_id":"exact source ID","summary":"Chinese factual coverage summary",'
+        '"facts_refs":["source registry key"],"evidence_refs":["source registry key"]}]}. '
+        "Include exactly one entry per supplied object. Preserve sample identity, complete formulation amounts/units, "
+        "processing, test conditions/results and controls when present; explicitly state missing data. Cite only "
+        "ALL SHORT registry keys belonging to that object, including every fact and evidence reference. "
+        "Use the short handles in facts_refs/evidence_refs, not the long source_ref_map values. "
+        "Do not invent values or compare performance across formulations. "
+        "This is evidence organization, not new reasoning or formulation optimization."
+    )
+    for index, batch in enumerate(plan["batches"]):
+        ids = [str(i["object_id"]) for i in evidence_delivery.expanded_items(batch)]
+        entry = {"index": index, "input_objects": ids, "packet_bytes": evidence_delivery.json_size(batch), "attempts": 0}
+        receipt["batches"].append(entry)
+        yield {"type": "progress", "stage": "evidence_batch", "batch": index + 1, "batch_count": len(plan["batches"]), "completed": len(receipt["covered_objects"])}
+        transport, aliases = evidence_delivery.batch_transport(batch, f"b{index}")
+        messages = build_model_messages(question, transport, _prepared=True)
+        messages[0]["content"] += "\n" + instructions
+        parsed, error = None, "batch_deadline"
+        for attempt in range(2):
+            if time.monotonic() >= deadline:
+                break
+            entry["attempts"] += 1
+            try:
+                parsed = _validate_batch_summary(_request_complete_text(messages, cfg, deadline=deadline), batch, aliases)
+                break
+            except (ValueError, KeyError, TypeError, OSError, http.client.HTTPException) as exc:
+                error = type(exc).__name__ + ":" + str(exc)[:160]
+                entry.setdefault("validation_failures", []).append(error)
+                if attempt == 0 and isinstance(exc, (ValueError, KeyError, TypeError)):
+                    messages.append({"role": "user", "content": "Batch validation failed: " + error +
+                        ". Correct the JSON against the same complete evidence batch. Include every object and "
+                        "its full reference set using the supplied short handles. Do not omit evidence or add facts."})
+        if parsed is None:
+            entry["status"] = "failed"
+            entry["failure_reason"] = error
+            receipt["failed_objects"].extend({"object_id": oid, "reason": error} for oid in ids)
+        else:
+            entry["status"] = "ok"
+            summaries.extend(parsed)
+            receipt["covered_objects"].extend(ids)
+        diag.event("evidence_batch_complete", **entry)
+    receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    final_packet = evidence_delivery.synthesis_context(prepared)
+    final_packet.update({"evidence_delivery": receipt, "evidence_batch_summaries": summaries})
+    answer = ""
+    if summaries and time.monotonic() < deadline and (budget == 0 or evidence_delivery.json_size(final_packet) <= budget):
+        choices = answer_selection.catalog(prepared, receipt["covered_objects"])
+        answer, selection = _selected_evidence_answer(question, final_packet, cfg, choices, deadline=deadline, source_packet=prepared)
+        receipt["answer_selection"] = selection
+    if not answer:
+        # Reference coverage does not establish semantic entailment of a summary.
+        choices = answer_selection.catalog(prepared, receipt["covered_objects"])
+        answer = answer_selection.fallback(choices, _display_limit(question))
+        receipt["answer_outcome"] = "selection_fallback"
+    diag.event("evidence_delivery_complete", **receipt)
+    yield {"type": "delta", "content": sanitize_customer_answer(answer) + _coverage_note(receipt), "provider": provider_label(cfg), "model": cfg["model"]}
+    yield {"type": "done", "provider": provider_label(cfg), "model": cfg["model"], "evidence_delivery": receipt}
 
 
 def stream_qwen(
@@ -1060,7 +1465,28 @@ def stream_qwen(
         yield {"type": "done", "provider": "local-mock", "model": "mock-memory-demo"}
         return
 
-    messages = build_model_messages(question, packet)
+    prepared = compact_packet_for_answer(packet)
+    plan = evidence_delivery.plan_batches(prepared, _int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024),
+                                         output_tokens=cfg["max_output_tokens"])
+    if plan["requires_batching"]:
+        yield from _stream_batched_answer(question, prepared, plan, cfg, diag_request_id)
+        return
+    if list(evidence_delivery.expanded_items(prepared)):
+        yield from _stream_selected_answer(question, prepared, cfg, diag_request_id)
+        return
+    observations = prepared.get("tool_observations") or []
+    expansion_failed = any(row.get("tool") in {"kg.expand_hyperedge_multihop", "kg.doc_field_scan"}
+        and (row.get("status") == "error" or (row.get("result") or {}).get("status") == "error")
+        for row in observations)
+    aggregate_ready = any(row.get("tool") == "kg.sql_aggregate" and row.get("status") == "ok" for row in observations)
+    if expansion_failed and not aggregate_ready:
+        receipt = copy.deepcopy(prepared.get("evidence_delivery") or {})
+        receipt.update(answer_outcome="no_verified_expansion", attempts=0, displayed_samples=0)
+        text = "本轮未能完成原始证据展开，因此暂不能核实具体配方和测试值。这不表示专利中没有这些数据。"
+        yield {"type": "delta", "content": text + _coverage_note(receipt), "provider": "structured-tool-fallback", "model": model}
+        yield {"type": "done", "provider": "structured-tool-fallback", "model": model, "evidence_delivery": receipt}
+        return
+    messages = build_model_messages(question, prepared, _prepared=True)
     body = build_provider_body(
         cfg,
         messages,
@@ -1088,12 +1514,30 @@ def stream_qwen(
         packet_bytes=len(json.dumps(messages, ensure_ascii=False).encode("utf-8")),
         packet_limit_bytes=_int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024),
     )
+    response_timer = None
+    completed = False
+    attempts = 1
+    outcome = "model_complete"
+    failure_reason = None
+
+    def delivery_receipt():
+        receipt = copy.deepcopy(prepared.get("evidence_delivery") or {})
+        receipt.update({"packet_bytes": evidence_delivery.json_size(prepared), "batch_count": 1,
+                        "attempts": attempts, "answer_outcome": outcome,
+                        "failure_reason": failure_reason,
+                        "submitted_objects": [str(row["object_id"]) for row in evidence_delivery.expanded_items(prepared)],
+                        "first_content_seconds": None if first_content_at is None else round(first_content_at - started_at, 3),
+                        "elapsed_seconds": round(time.monotonic() - started_at, 3)})
+        diag.event("evidence_delivery_complete", **receipt)
+        return receipt
+
     try:
         initial_timeout = min(
             max(1, int(cfg.get("stream_read_timeout_seconds") or 60)),
             max(1, int(cfg.get("stream_first_token_timeout_seconds") or 45)),
         )
-        with urllib.request.urlopen(req, timeout=initial_timeout) as resp:
+        with _open_provider_response(req, started_at + initial_timeout) as resp:
+            response_timer = _response_deadline_timer(resp, started_at + initial_timeout)
             for raw_line in resp:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line:
@@ -1124,18 +1568,22 @@ def stream_qwen(
                 data = line[len("data:") :].strip()
                 if data == "[DONE]":
                     diag.line_event("data_done")
+                    completed = True
                     break
                 try:
                     payload = json.loads(data)
                 except json.JSONDecodeError:
                     diag.line_event("data_unparseable")
                     continue
+                completed = _provider_completed(payload) or completed
                 content = extract_stream_delta_text(payload, cfg)
                 diag.line_event("data_content" if content else "data_no_content")
                 if content:
                     now = time.monotonic()
                     if first_content_at is None:
                         first_content_at = now
+                        response_timer.cancel()
+                        response_timer = _response_deadline_timer(resp, started_at + int(cfg.get("stream_total_timeout_seconds") or 180))
                         set_response_socket_timeout(resp, int(cfg.get("stream_read_timeout_seconds") or 60))
                     last_content_at = now
                     emitted = True
@@ -1155,7 +1603,12 @@ def stream_qwen(
                 )
                 if timeout_reason:
                     break
+        if response_timer:
+            response_timer.cancel()
+        timeout_reason = timeout_reason or stream_timeout_reason(now=time.monotonic(), started_at=started_at,
+            first_content_at=first_content_at, last_content_at=last_content_at, cfg=cfg)
         if timeout_reason:
+            failure_reason = timeout_reason
             diag.event(
                 "upstream_timeout",
                 kind=timeout_reason,
@@ -1165,16 +1618,20 @@ def stream_qwen(
             retry_answer = ""
             if not emitted:
                 try:
+                    attempts = 2
                     retry_answer = retry_compact_answer(question, packet, cfg)
-                    diag.event("compact_retry_succeeded", packet_limit_bytes=_int_env("LLM_MODEL_PACKET_RETRY_MAX_BYTES", 256 * 1024))
+                    diag.event("full_evidence_retry_succeeded", packet_limit_bytes=_int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024))
                 except Exception as exc:  # noqa: BLE001
-                    diag.event("compact_retry_failed", error=str(exc))
-            content = retry_answer or structured_tool_fallback_answer(packet)
-            yield {"type": "delta", "content": content, "provider": provider_label(cfg), "model": model}
-            yield {"type": "done", "provider": provider_label(cfg), "model": model}
+                    diag.event("full_evidence_retry_failed", error=str(exc))
+            content = (retry_answer + _coverage_note(prepared.get("evidence_delivery") or {})) if retry_answer else structured_tool_fallback_answer(packet, question)
+            outcome = "model_retry_complete" if retry_answer else "structured_fallback"
+            provider = provider_label(cfg) if retry_answer else "structured-tool-fallback"
+            yield {"type": "delta", "content": content, "provider": provider, "model": model}
+            yield {"type": "done", "provider": provider, "model": model, "evidence_delivery": delivery_receipt()}
             return
         if not emitted and plain_lines:
             payload = json.loads("\n".join(plain_lines))
+            _provider_completed(payload)
             content = extract_provider_text(payload, cfg)
             answer = sanitize_customer_answer(content)
             if answer:
@@ -1185,63 +1642,58 @@ def stream_qwen(
                         "provider": provider_label(cfg),
                         "model": payload.get("model") or model,
                     }
-        diag.event("upstream_loop_done", emitted=emitted)
-        yield {"type": "done", "provider": provider_label(cfg), "model": model}
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, TimeoutError, json.JSONDecodeError) as exc:
+                completed = True
+            else:
+                raise ValueError("empty_provider_answer")
+        if emitted and not completed:
+            raise http.client.IncompleteRead(b"", None)
+        if not emitted and not plain_lines:
+            failure_reason = "empty_provider_answer"
+            try:
+                attempts = 2
+                answer = retry_compact_answer(question, packet, cfg)
+                outcome = "model_retry_complete"
+            except Exception:  # same complete evidence, then a structural fallback
+                answer = structured_tool_fallback_answer(packet, question)
+                outcome = "structured_fallback"
+            yield {"type": "delta", "content": answer, "provider": provider_label(cfg), "model": model}
+        note = _coverage_note(prepared.get("evidence_delivery") or {})
+        if note:
+            yield {"type": "delta", "content": note, "provider": provider_label(cfg), "model": model}
+        receipt = delivery_receipt()
+        diag.event("upstream_loop_done", emitted=emitted, evidence_delivery=receipt)
+        yield {"type": "done", "provider": provider_label(cfg), "model": model, "evidence_delivery": receipt}
+    except (OSError, KeyError, ValueError, http.client.HTTPException) as exc:
+        failure_reason = type(exc).__name__
         diag.event("upstream_exception", error=str(exc))
         retry_answer = ""
-        if not emitted:
+        if not emitted and attempts < 2:
             try:
+                attempts = 2
                 retry_answer = retry_compact_answer(question, packet, cfg)
-                diag.event("compact_retry_succeeded", packet_limit_bytes=_int_env("LLM_MODEL_PACKET_RETRY_MAX_BYTES", 256 * 1024))
+                diag.event("full_evidence_retry_succeeded", packet_limit_bytes=_int_env("LLM_MODEL_PACKET_MAX_BYTES", 512 * 1024))
             except Exception as retry_exc:  # noqa: BLE001
-                diag.event("compact_retry_failed", error=str(retry_exc))
+                diag.event("full_evidence_retry_failed", error=str(retry_exc))
+        outcome = "model_retry_complete" if retry_answer else "structured_fallback"
         yield {
             "type": "delta",
-            "content": retry_answer or structured_tool_fallback_answer(packet),
+            "content": (retry_answer + _coverage_note(prepared.get("evidence_delivery") or {})) if retry_answer else structured_tool_fallback_answer(packet, question),
             "provider": provider_label(cfg) if retry_answer else "structured-tool-fallback",
             "model": model,
         }
-        yield {"type": "done", "provider": provider_label(cfg) if retry_answer else "structured-tool-fallback", "model": model}
+        yield {"type": "done", "provider": provider_label(cfg) if retry_answer else "structured-tool-fallback", "model": model, "evidence_delivery": delivery_receipt()}
+    finally:
+        if response_timer:
+            response_timer.cancel()
 
 
 def call_qwen(question: str, packet: dict[str, Any]) -> dict[str, Any]:
-    clarification = scope_clarification_answer(packet)
-    if clarification:
-        cfg = provider_config()
-        return {"answer": clarification, "provider": "scope-resolver", "model": cfg["model"]}
-    cfg = provider_config()
-    api_key = cfg["api_key"]
-    base_url = cfg["base_url"]
-    model = cfg["model"]
-    if not api_key:
-        return {
-            "answer": sanitize_customer_answer(local_mock_answer(question, packet)),
-            "provider": "local-mock",
-            "model": "mock-memory-demo",
-        }
-
-    body = build_provider_body(
-        cfg,
-        build_model_messages(question, packet),
-        temperature=0.4,
-        max_tokens=cfg["max_output_tokens"],
-        stream=False,
-    )
-    req = urllib.request.Request(
-        provider_messages_url(cfg),
-        data=json.dumps(body).encode("utf-8"),
-        headers=provider_headers(cfg),
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        answer = sanitize_customer_answer(extract_provider_text(payload, cfg))
-        return {"answer": answer, "provider": provider_label(cfg), "model": model}
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, TimeoutError) as exc:
-        return {
-            "answer": f"模型 API 调用失败，已保留本地记忆链路。错误：{exc}",
-            "provider": "openai-compatible-error",
-            "model": model,
-        }
+    # Buffered and live endpoints share evidence delivery, budgets and retries.
+    result: dict[str, Any] = {"answer": ""}
+    for event in stream_qwen(question, packet):
+        if event.get("type") == "delta":
+            result["answer"] += event.get("content") or ""
+        for field in ("provider", "model", "evidence_delivery"):
+            if field in event:
+                result[field] = event[field]
+    return result

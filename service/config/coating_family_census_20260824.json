@@ -1,0 +1,4121 @@
+{
+  "generated_at": "2026-08-24",
+  "source": "A100 live kg_dirs via 8021/health",
+  "profile_rows": 959,
+  "unique_docs": 835,
+  "coating_family_missing_rows": 275,
+  "packs": [
+    {
+      "dir": "/root/coating/embedding/data/kg_286_aggregate",
+      "exists": true,
+      "rows": 554
+    },
+    {
+      "dir": "/root/coating/work/auto_refinish_300_20260731/kg_ingest_20260803/ppg/merged_kg_pack",
+      "exists": true,
+      "rows": 100
+    },
+    {
+      "dir": "/root/coating/work/auto_refinish_300_20260731/kg_ingest_20260803/axalta/merged_kg_pack",
+      "exists": true,
+      "rows": 100
+    },
+    {
+      "dir": "/root/coating/work/auto_refinish_300_20260731/kg_ingest_20260803/akzonobel_partial_64_of_100",
+      "exists": false,
+      "rows": 0
+    },
+    {
+      "dir": "/root/coating/work/hb_fuller_122_20260813/merged_kg_pack",
+      "exists": true,
+      "rows": 122
+    },
+    {
+      "dir": "/root/coating/work/track_b6_20260817/accepted_packs/axalta",
+      "exists": true,
+      "rows": 22
+    },
+    {
+      "dir": "/root/coating/work/track_b6_20260817/accepted_packs/hb_fuller",
+      "exists": true,
+      "rows": 61
+    }
+  ],
+  "coating_family_value_counts": [
+    {
+      "value": "adhesive_or_functional_layer",
+      "row_count": 118,
+      "doc_count": 65
+    },
+    {
+      "value": "antifouling",
+      "row_count": 37,
+      "doc_count": 37
+    },
+    {
+      "value": "primer",
+      "row_count": 28,
+      "doc_count": 28
+    },
+    {
+      "value": "clearcoat",
+      "row_count": 24,
+      "doc_count": 24
+    },
+    {
+      "value": "topcoat",
+      "row_count": 24,
+      "doc_count": 24
+    },
+    {
+      "value": "electrocoat",
+      "row_count": 20,
+      "doc_count": 20
+    },
+    {
+      "value": "not_a_coating_formulation",
+      "row_count": 19,
+      "doc_count": 17
+    },
+    {
+      "value": "powder",
+      "row_count": 13,
+      "doc_count": 13
+    },
+    {
+      "value": "basecoat",
+      "row_count": 10,
+      "doc_count": 10
+    },
+    {
+      "value": "adhesive_layer_between_elastomeric_film_and_nonwoven",
+      "row_count": 10,
+      "doc_count": 10
+    },
+    {
+      "value": "antifouling_marine",
+      "row_count": 9,
+      "doc_count": 9
+    },
+    {
+      "value": "optical_fiber_primary_coating",
+      "row_count": 8,
+      "doc_count": 8
+    },
+    {
+      "value": "antifouling_topcoat",
+      "row_count": 7,
+      "doc_count": 7
+    },
+    {
+      "value": "fouling_release",
+      "row_count": 7,
+      "doc_count": 7
+    },
+    {
+      "value": "optical_fiber_coating",
+      "row_count": 7,
+      "doc_count": 7
+    },
+    {
+      "value": "not_assessable_from_supplied_edition",
+      "row_count": 7,
+      "doc_count": 7
+    },
+    {
+      "value": "patterned_adhesive_print_for_three_dimensional_web_texture",
+      "row_count": 7,
+      "doc_count": 7
+    },
+    {
+      "value": "one_part_moisture_curable_hot_melt_sealant",
+      "row_count": 6,
+      "doc_count": 3
+    },
+    {
+      "value": "slot_coated_adhesive_layers_in_nonwoven_elastic_film_laminate",
+      "row_count": 6,
+      "doc_count": 6
+    },
+    {
+      "value": "fouling_control",
+      "row_count": 4,
+      "doc_count": 4
+    },
+    {
+      "value": "fouling_control_topcoat",
+      "row_count": 4,
+      "doc_count": 4
+    },
+    {
+      "value": "fouling_release_topcoat",
+      "row_count": 4,
+      "doc_count": 4
+    },
+    {
+      "value": "tie_coat",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "packaging_coating",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "hardcoat",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "can_coating",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "optical_fiber_secondary_coating",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "sealant",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "waterborne_paint",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "two_component_automotive_refinish_color_mixing_system",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "automotive_refinish_mixing_scheme",
+      "row_count": 3,
+      "doc_count": 3
+    },
+    {
+      "value": "fouling_release_antifouling",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "antifouling_marine_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "foul_release",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "intumescent",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "interior_can_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "can_interior_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "waterborne_semi_gloss_paint",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "clear_topcoat",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "packaging_can_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "leading_edge_protection",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "optical_fiber_single_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "optical_fiber_ribbon_matrix",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "optical_fiber_upjacket",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "gelcoat",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "protective_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "film",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "fouling_control_coating",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "radiation_curable_clearcoat_over_waterborne_refinish_basecoat",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "two_component_ambient_cure_automotive_refinish_primer",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "high_solids_waterborne_automotive_refinish_primer_and_sealer",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "UV_curable_automotive_refinish_primer",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "radiation_curable_automotive_refinish_putty",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "color_clear_multilayer_automotive_refinish",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "low_temperature_moisture_curable_automotive_refinish_topcoat",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "solvent_borne_uv_curable_automotive_spot_repair_blender",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "automotive_color_plus_clear_scratch_resistant_recoat_system",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "automotive_color_plus_clear_recoat_adhesion_and_scratch_resistance",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "thermosetting automotive spot-repair and color-plus-clear coatings",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "reactive_hot_melt_adhesive_layer",
+      "row_count": 2,
+      "doc_count": 1
+    },
+    {
+      "value": "formaldehyde_free_curable_mat_binder",
+      "row_count": 2,
+      "doc_count": 1
+    },
+    {
+      "value": "adhesive_layer",
+      "row_count": 2,
+      "doc_count": 1
+    },
+    {
+      "value": "patterned adhesive print for high-bulk clothlike web",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "equipment_or_control_process",
+      "row_count": 2,
+      "doc_count": 2
+    },
+    {
+      "value": "anti-fouling",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "fouling_release_edge_sealant",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "basecoat_topcoat_multilayer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primer_topcoat_multilayer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "exterior_self_cleaning_paint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "intumescent_fire_protection",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "basecoat_clearcoat_solar_reflective",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "thermal_insulating_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "functional_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "polyurea_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "powder_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "functional_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "tielayer_adhesion_promoter",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "antifouling_fouling_release_system",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "antifouling_paint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "multi",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anti_fouling",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "basecoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_architectural",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anticorrosion_PEM",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "pigment_dispersed_substrate",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "UV_cure_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "one_component_moisture_cure_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "multi_application",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_basecoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "semi_gloss_waterborne_paint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_1K",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anti_slip_floor_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "wrinkle_finish_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "peelable",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "pipe_lining",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "antifouling_foul_release",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "water_repellant_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "antifouling_fouling_release",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "multi-layer (basecoat + clearcoat/topcoat) with anionic-polymerizable second/third layer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "elastic_barrier_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "multilayer_basecoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "paper_coating_slip",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_antireflection",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "protective_anticorrosive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "multi_layer_textured_facade",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "printing_ink",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_pack_cast_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "laser_cured_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "aqueous_topcoat_sealer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "wood_coating_waterborne",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "food_beverage_can_interior",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "metallic_nanoparticle_ink_printing",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primer_undercoat_pre_coated_steel",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "container_internal_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "packaging_protective_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "coil_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "packaging_interior",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primer_plus_active_layer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "aqueous_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "easy_to_clean_thin_film",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "architectural_waterborne",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "adhesive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "clearcoat_or_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "clearcoat_and_pigmented_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anticorrosion_antimicrobial",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_fiber_colored_ink_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "surface_film",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "peelable_bonded_ribbon_matrix",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_fiber_colored_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_fiber_colored_ink",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_fiber_write_through_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_fiber_supercoating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primary_coating_optical_fiber",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "fouling_release_ice_release",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "extruded_sheath",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "antireflective_solgel",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "release_coat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "clearcoat_sol_gel_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "clearcoat_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "photochromic_optical_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "sol_gel_topcoat_over_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "general_purpose_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anticorrosive_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primer_topcoat_system",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "topcoat_UV_curable",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "uv_curable_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "moisture_cure_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "abrasion_resistant_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "topcoat_precoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "zinc_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anticorrosive_static_conductive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primer_or_finish",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "polyurethane_precursor",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ice_release_clearcoat_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "photopatternable_hardcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "cargo_hold_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "surface_treatment",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "soft_touch_anti_fingerprint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anti_corrosive_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "adhesion_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_architectural_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "bi_layer_corrosion_barrier",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "corrosion_resistant_high_build",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "high_temperature_protective",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "heat_resistant_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "inorganic_photonic_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anti_corrosion_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "high_heat_resistance_anticorrosive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "protective_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "anticorrosive_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "surface_pretreatment",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "non_stick_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "textured_multilayer_exterior",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "LEP_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "surface_characterization_system",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_waterborne_effect_basecoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "insulative_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "non_stick_heat_resistant",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "non_stick_ceramic",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "colored_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "rheology_additive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "passivation",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "functional_black_pigment",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "structural_adhesive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "metal_protective_waterborne_black_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "overspray_free_basecoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "multicoat_basecoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "intumescent_powder_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "architectural_semigloss_paint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "metal_pretreatment_rinse",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "colorant_pigment",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "intumescent_protective",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "particle_dip_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "decorative_paint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "flexible_substrate_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "pressure_sensitive_adhesive",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "optical_fiber_uv_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "architectural_waterborne_paint",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "adhesive_interlayer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "coating_remover",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "primary",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "architecture",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_automotive_refinish_basecoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_pack_automotive_refinish_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_package_automotive_refinish_primer_sealer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "UV_cured_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_automotive_refinish_primer_and_sealer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "solventborne_low_temperature_automotive_refinish_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive-refinish primer/basecoat for thermoplastic polyolefin replacement parts",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_automotive_refinish_coating_with_extended_pot_life",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient-cure automotive refinish primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automated automotive-refinish color matching and spray-panel evaluation",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient-cure automotive refinish clearcoat with extended pot life",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "low-temperature two-component automotive clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "mar_scratch_resistant_automotive_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "small-area automotive exterior refinish system",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "mar_and_scratch_resistant_automotive_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_automotive_refinish_urethane",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_metallic_basecoat_for_automotive_multilayer_repair",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_refinish_primer_and_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "universal_automotive_refinish_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "vehicle_bed-liner_repair_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "non-hiding color layer plus clearcoat for automotive refinish",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "UV_cured_waterborne_basecoat_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_automotive_refinish_primer_anti_ringing",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "cure_on_demand_automotive_refinish_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "chromium_free_corrosion_inhibiting_refinish_primer_and_multilayer_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_plastic_service_primer_and_adhesion_promoter",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient-cure non-isocyanate automotive refinish clearcoat and pigmented coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "dual_dispersant_tint_paste_for_automotive_refinish_layers",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "fast_sandable_multi_substrate_automotive_refinish_primer_sealer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "high_solids_low_VOC_vehicular_refinish_primer_sealer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_component_water_based_primer_surfacer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_moisture_cure_automotive_refinish_topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "metallic_automotive_finish_refinish_enamel",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_refinish_acrylic_lacquer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "low-temperature automotive refinish coating for elastomeric and metallic parts",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "moisture-cure automotive-refinish color-plus-clear",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "sprayable protective and decorative automotive refinish coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_repair_metallic_basecoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_automobile_refinish_undercoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient-cure non-yellowing automotive-refinish color-plus-clear",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_package_ambient_cure_automotive_refinish_primer_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_package_automotive_refinish_primer_surfacer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_component_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "high_solids_two_component_polyisocyanate_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "rapid_dry_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient-cure two-component automotive-refinish primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two-component_ambient-cure_automotive-refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_or_low_temperature_automotive_refinish_primer_surfacer_and_sealer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_filler_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_metallic_automotive_basecoat_for_low_bake_repair",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_chrome_free_automotive_refinish_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "low_VOC_fast_drying_2K_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient-curable two-package clearcoat over refinish basecoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "fast_drying_2K_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_refinish_polyurethane_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "ambient_cure_automotive_refinish_primer",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_color_plus_clear_repair_recoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "flexible_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "low-VOC waterborne two-pack vehicle-refinish primer and topcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_refinish_in_gun_multi_component_mixing_and_spray_application",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "vehicle_bedliner_protective_coating_repair",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne 2K automotive refinish basecoat/direct-gloss coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "low-metamerism automotive refinish color coat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "particle-reinforced automotive refinish clearcoat and powder/liquid coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "waterborne_low_bake_automotive_repair_basecoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_package_non_isocyanate_ambient_cure_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "high_solids_automotive_OEM_recoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive refinish multi-component inline-mixed spray coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "automotive_refinish_plastic-substrate_basecoat_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "sprayable_vehicle_bed_liner_and_patch_coating",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_package_self_healing_automotive_refinish_clearcoat",
+      "row_count": 1,
+      "doc_count": 1
+    },
+    {
+      "value": "two_clear_paint_set_for_matte_automotive_spot_repair",
+      "row_count": 1,
+      "doc_count": 1
+    }
+  ],
+  "application_family_counts": [
+    [
+      "marine",
+      122
+    ],
+    [
+      "industrial_adhesive_or_material",
+      108
+    ],
+    [
+      "automotive",
+      107
+    ],
+    [
+      "industrial_general",
+      99
+    ],
+    [
+      "automotive_refinish",
+      85
+    ],
+    [
+      "protective_anticorrosive",
+      52
+    ],
+    [
+      "architectural_construction",
+      46
+    ],
+    [
+      "optical_fiber",
+      37
+    ],
+    [
+      "food_beverage_packaging",
+      24
+    ],
+    [
+      "plastics_film",
+      23
+    ],
+    [
+      "aerospace_defense",
+      21
+    ],
+    [
+      "ambient_cure",
+      18
+    ],
+    [
+      "absorbent_article_stretch_laminate",
+      16
+    ],
+    [
+      "adhesives_sealants",
+      15
+    ],
+    [
+      "wood_furniture",
+      13
+    ],
+    [
+      "electronics_electrical",
+      10
+    ],
+    [
+      "optics_display",
+      10
+    ],
+    [
+      "wind_energy",
+      10
+    ],
+    [
+      "clearcoat",
+      10
+    ],
+    [
+      "ev_battery",
+      9
+    ],
+    [
+      "coil_coating",
+      9
+    ],
+    [
+      "basecoat_clearcoat",
+      9
+    ],
+    [
+      "printed_tissue_and_absorbent_web",
+      9
+    ],
+    [
+      "other_specialty",
+      8
+    ],
+    [
+      "consumer_goods",
+      8
+    ],
+    [
+      "color_plus_clear",
+      8
+    ],
+    [
+      "collision_repair",
+      8
+    ],
+    [
+      "spot_repair",
+      8
+    ],
+    [
+      "absorbent_article_or_nonwoven",
+      8
+    ],
+    [
+      "fire_protection",
+      7
+    ],
+    [
+      "printing_ink",
+      7
+    ],
+    [
+      "oil_gas_pipeline",
+      6
+    ],
+    [
+      "automotive_clearcoat",
+      6
+    ],
+    [
+      "insulating_glass_primary_or_secondary_sealant",
+      6
+    ],
+    [
+      "textile_leather",
+      5
+    ],
+    [
+      "repair_primer",
+      5
+    ],
+    [
+      "solar_pv",
+      4
+    ],
+    [
+      "basecoat",
+      4
+    ],
+    [
+      "primer_surfacer",
+      4
+    ],
+    [
+      "lamination",
+      4
+    ],
+    [
+      "electronic_device_dual_cure_laminating_adhesive",
+      4
+    ],
+    [
+      "electronics",
+      4
+    ],
+    [
+      "hot_melt_anti_blocking_additive",
+      4
+    ],
+    [
+      "woodworking",
+      4
+    ],
+    [
+      "medical",
+      3
+    ],
+    [
+      "appliance_hvac",
+      3
+    ],
+    [
+      "pigmented_topcoat",
+      3
+    ],
+    [
+      "bare_metal_primer",
+      3
+    ],
+    [
+      "radiation_cured_clearcoat",
+      3
+    ],
+    [
+      "waterborne_basecoat_clearcoat",
+      3
+    ],
+    [
+      "primer",
+      3
+    ],
+    [
+      "vehicle_repair",
+      3
+    ],
+    [
+      "multilayer_coating",
+      3
+    ],
+    [
+      "body_shop",
+      3
+    ],
+    [
+      "repair_clearcoat",
+      3
+    ],
+    [
+      "automotive_color_plus_clear",
+      3
+    ],
+    [
+      "ambient_shop_repair",
+      2
+    ],
+    [
+      "repair_sealer",
+      2
+    ],
+    [
+      "spray_coating",
+      2
+    ],
+    [
+      "vehicle_refinish",
+      2
+    ],
+    [
+      "extended_pot_life",
+      2
+    ],
+    [
+      "automotive_refinish_primer",
+      2
+    ],
+    [
+      "stone_chip_repair",
+      2
+    ],
+    [
+      "multilayer_vehicle_coating_repair",
+      2
+    ],
+    [
+      "waterborne_primer",
+      2
+    ],
+    [
+      "waterborne_sealer",
+      2
+    ],
+    [
+      "low_temperature_cure",
+      2
+    ],
+    [
+      "rapid_sanding",
+      2
+    ],
+    [
+      "body_filler",
+      2
+    ],
+    [
+      "putty",
+      2
+    ],
+    [
+      "vehicle_bed_liner_repair",
+      2
+    ],
+    [
+      "motor_vehicle_part_repair",
+      2
+    ],
+    [
+      "vehicle_topcoat",
+      2
+    ],
+    [
+      "primer_basecoat_topcoat",
+      2
+    ],
+    [
+      "clearcoat_blending",
+      2
+    ],
+    [
+      "uv_cure",
+      2
+    ],
+    [
+      "polishing",
+      2
+    ],
+    [
+      "refinish_primer",
+      2
+    ],
+    [
+      "adhesion_promotion",
+      2
+    ],
+    [
+      "pigmented_coating",
+      2
+    ],
+    [
+      "metallic_topcoat",
+      2
+    ],
+    [
+      "two_pack_coating",
+      2
+    ],
+    [
+      "automotive_basecoat",
+      2
+    ],
+    [
+      "clearcoat_over_pigmented_basecoat",
+      2
+    ],
+    [
+      "ambient_dry",
+      2
+    ],
+    [
+      "automotive_repair_recoat",
+      2
+    ],
+    [
+      "repair_recoat",
+      2
+    ],
+    [
+      "spray_application",
+      2
+    ],
+    [
+      "texture_matching",
+      2
+    ],
+    [
+      "liquid_or_powder_coating",
+      2
+    ],
+    [
+      "electronic_device_PET_lamination",
+      2
+    ],
+    [
+      "glass_fiber_insulation_binder",
+      2
+    ],
+    [
+      "industrial_hot_melt_adhesive",
+      2
+    ],
+    [
+      "pressure_sensitive_adhesive",
+      2
+    ],
+    [
+      "feather_edge_repair",
+      1
+    ],
+    [
+      "vehicle_repair_primer",
+      1
+    ],
+    [
+      "ambient_or_low_bake_cure",
+      1
+    ],
+    [
+      "wet_on_wet_sealer",
+      1
+    ],
+    [
+      "multilayer_basecoat_clearcoat",
+      1
+    ],
+    [
+      "paint_shop_repair",
+      1
+    ],
+    [
+      "color_clear_multilayer",
+      1
+    ],
+    [
+      "body_shop_primer",
+      1
+    ],
+    [
+      "automotive_repainting",
+      1
+    ],
+    [
+      "plastic_repair",
+      1
+    ],
+    [
+      "uncoated_replacement_part",
+      1
+    ],
+    [
+      "TPO",
+      1
+    ],
+    [
+      "two_component_polyurethane_coating",
+      1
+    ],
+    [
+      "clearcoat_basecoat_or_primer",
+      1
+    ],
+    [
+      "ringing_control",
+      1
+    ],
+    [
+      "automatic_color_matching",
+      1
+    ],
+    [
+      "component_dispensing",
+      1
+    ],
+    [
+      "spray_panel_evaluation",
+      1
+    ],
+    [
+      "spray_activated_catalyst",
+      1
+    ],
+    [
+      "aftermarket_repair",
+      1
+    ],
+    [
+      "HVLP_spray",
+      1
+    ],
+    [
+      "QUV_durable_repair_finish",
+      1
+    ],
+    [
+      "sanding_and_buffing_repair",
+      1
+    ],
+    [
+      "automobile_part_refinishing",
+      1
+    ],
+    [
+      "clearcoat_or_pigmented_topcoat",
+      1
+    ],
+    [
+      "multilayer_defect_repair",
+      1
+    ],
+    [
+      "multi-component_coating_mixing",
+      1
+    ],
+    [
+      "repair_of_damaged_vehicle_body_parts",
+      1
+    ],
+    [
+      "mixed_metal_and_plastic_primer",
+      1
+    ],
+    [
+      "refinish_basecoat_clearcoat",
+      1
+    ],
+    [
+      "textured_patch",
+      1
+    ],
+    [
+      "waterborne_color_layer",
+      1
+    ],
+    [
+      "humidity_resistant_UV_clearcoat",
+      1
+    ],
+    [
+      "damaged_multilayer_repair",
+      1
+    ],
+    [
+      "anti_ringing_edge_mapping",
+      1
+    ],
+    [
+      "automotive_aftermarket",
+      1
+    ],
+    [
+      "cure_on_demand",
+      1
+    ],
+    [
+      "two_package_coating",
+      1
+    ],
+    [
+      "automotive_primer",
+      1
+    ],
+    [
+      "corrosion_protection",
+      1
+    ],
+    [
+      "service_primer",
+      1
+    ],
+    [
+      "automotive_repair_shop",
+      1
+    ],
+    [
+      "plastic_part_repair",
+      1
+    ],
+    [
+      "fuel_resistance",
+      1
+    ],
+    [
+      "multi_package_coating",
+      1
+    ],
+    [
+      "repair_basecoat",
+      1
+    ],
+    [
+      "tint_paste",
+      1
+    ],
+    [
+      "multi_substrate_refinish",
+      1
+    ],
+    [
+      "fast_sandability",
+      1
+    ],
+    [
+      "vehicular_refinish",
+      1
+    ],
+    [
+      "OEM_end_of_line_repair",
+      1
+    ],
+    [
+      "primer_sealer",
+      1
+    ],
+    [
+      "plastic_and_metal_vehicle_parts",
+      1
+    ],
+    [
+      "vehicle_replacement_parts",
+      1
+    ],
+    [
+      "polymer_substrate_primer_surfacer",
+      1
+    ],
+    [
+      "automobile_refinishing",
+      1
+    ],
+    [
+      "gloss_improvement",
+      1
+    ],
+    [
+      "automotive_finishing",
+      1
+    ],
+    [
+      "automotive_refinishing",
+      1
+    ],
+    [
+      "white_lacquer",
+      1
+    ],
+    [
+      "recoat",
+      1
+    ],
+    [
+      "collision_damage_repair",
+      1
+    ],
+    [
+      "flexible_parts",
+      1
+    ],
+    [
+      "metallic_basecoat",
+      1
+    ],
+    [
+      "protective_decorative_coating",
+      1
+    ],
+    [
+      "automobile_repair",
+      1
+    ],
+    [
+      "metallic_basecoat_clearcoat",
+      1
+    ],
+    [
+      "anti_gassing",
+      1
+    ],
+    [
+      "chip_resistance",
+      1
+    ],
+    [
+      "automobile_refinish",
+      1
+    ],
+    [
+      "primer_filler",
+      1
+    ],
+    [
+      "ambient_cure_clearcoat",
+      1
+    ],
+    [
+      "sanding_primer",
+      1
+    ],
+    [
+      "color_clear",
+      1
+    ],
+    [
+      "motor_vehicle_refinish",
+      1
+    ],
+    [
+      "motor_vehicle_topcoat",
+      1
+    ],
+    [
+      "clear_topcoat",
+      1
+    ],
+    [
+      "sealer",
+      1
+    ],
+    [
+      "bare_metal_repair",
+      1
+    ],
+    [
+      "low_temperature_booth_cure",
+      1
+    ],
+    [
+      "filler_primer",
+      1
+    ],
+    [
+      "automotive_low_bake_repair",
+      1
+    ],
+    [
+      "sandable_primer",
+      1
+    ],
+    [
+      "chrome_free",
+      1
+    ],
+    [
+      "featheredge_sanding",
+      1
+    ],
+    [
+      "spray_applied_primer",
+      1
+    ],
+    [
+      "repair_basecoat_clearcoat",
+      1
+    ],
+    [
+      "windshield_adhesion",
+      1
+    ],
+    [
+      "1K_and_2K_clearcoat",
+      1
+    ],
+    [
+      "car_wash_and_scratch_resistance",
+      1
+    ],
+    [
+      "crash_damage_repair",
+      1
+    ],
+    [
+      "refinish_topcoat",
+      1
+    ],
+    [
+      "two_pack",
+      1
+    ],
+    [
+      "in_gun_mixing",
+      1
+    ],
+    [
+      "pot_life_management",
+      1
+    ],
+    [
+      "vehicle_aftermarket_repair",
+      1
+    ],
+    [
+      "truck_bedliner_refinish",
+      1
+    ],
+    [
+      "protective_coating_patch",
+      1
+    ],
+    [
+      "corrosion_prevention",
+      1
+    ],
+    [
+      "waterborne_basecoat",
+      1
+    ],
+    [
+      "direct_gloss",
+      1
+    ],
+    [
+      "two_component",
+      1
+    ],
+    [
+      "vehicle_color_matching",
+      1
+    ],
+    [
+      "mixing_base",
+      1
+    ],
+    [
+      "scratch_resistant_coating",
+      1
+    ],
+    [
+      "automotive_OEM_low_bake_repair",
+      1
+    ],
+    [
+      "wet_on_wet_basecoat_clearcoat",
+      1
+    ],
+    [
+      "automotive_bodies_and_parts",
+      1
+    ],
+    [
+      "OEM_online_repair",
+      1
+    ],
+    [
+      "defect_recoat",
+      1
+    ],
+    [
+      "two_tone_recoat",
+      1
+    ],
+    [
+      "repair_shop",
+      1
+    ],
+    [
+      "inline_mixing",
+      1
+    ],
+    [
+      "two_component_clearcoat",
+      1
+    ],
+    [
+      "plastic_bumper_repair",
+      1
+    ],
+    [
+      "protective_coating_repair",
+      1
+    ],
+    [
+      "accident_damage_repair",
+      1
+    ],
+    [
+      "low_bake",
+      1
+    ],
+    [
+      "self_healing",
+      1
+    ],
+    [
+      "matte_surface_spot_repair",
+      1
+    ],
+    [
+      "elasticized_nonwoven_laminate",
+      1
+    ]
+  ],
+  "application_family_raw_counts": [
+    [
+      "marine_antifouling",
+      82
+    ],
+    [
+      "automotive_oem",
+      81
+    ],
+    [
+      "industrial_maintenance",
+      57
+    ],
+    [
+      "marine",
+      23
+    ],
+    [
+      "automotive_refinish",
+      18
+    ],
+    [
+      "optical_fiber_coating",
+      18
+    ],
+    [
+      "industrial_coatings",
+      12
+    ],
+    [
+      "industrial",
+      12
+    ],
+    [
+      "fouling_release",
+      11
+    ],
+    [
+      "aerospace",
+      10
+    ],
+    [
+      "architectural",
+      9
+    ],
+    [
+      "optical_fiber_ribbon",
+      8
+    ],
+    [
+      "ship_hull",
+      7
+    ],
+    [
+      "industrial_coating",
+      7
+    ],
+    [
+      "anticorrosive",
+      6
+    ],
+    [
+      "automotive",
+      6
+    ],
+    [
+      "corrosion_protection",
+      6
+    ],
+    [
+      "optical_fiber",
+      6
+    ],
+    [
+      "food_beverage_packaging",
+      5
+    ],
+    [
+      "coil_coating",
+      5
+    ],
+    [
+      "marine_fouling_release",
+      4
+    ],
+    [
+      "fire_protection",
+      4
+    ],
+    [
+      "consumer_electronics",
+      4
+    ],
+    [
+      "wood_coating",
+      4
+    ],
+    [
+      "construction",
+      4
+    ],
+    [
+      "offshore",
+      4
+    ],
+    [
+      "automotive_coatings",
+      4
+    ],
+    [
+      "architectural_exterior",
+      3
+    ],
+    [
+      "oil_and_gas",
+      3
+    ],
+    [
+      "anti_corrosive",
+      3
+    ],
+    [
+      "underwater_structure",
+      3
+    ],
+    [
+      "architectural_paint",
+      3
+    ],
+    [
+      "beverage_can_coating",
+      3
+    ],
+    [
+      "food_and_beverage_packaging",
+      3
+    ],
+    [
+      "metal_packaging",
+      3
+    ],
+    [
+      "architectural_coatings",
+      3
+    ],
+    [
+      "adhesives",
+      3
+    ],
+    [
+      "food_beverage_can_interior",
+      3
+    ],
+    [
+      "wind_turbine_blade",
+      3
+    ],
+    [
+      "telecommunications",
+      3
+    ],
+    [
+      "cookware",
+      3
+    ],
+    [
+      "shipbuilding",
+      2
+    ],
+    [
+      "battery_components",
+      2
+    ],
+    [
+      "self_polishing",
+      2
+    ],
+    [
+      "passive_fire_protection",
+      2
+    ],
+    [
+      "structural_steel",
+      2
+    ],
+    [
+      "thermal_insulation",
+      2
+    ],
+    [
+      "anti_icing",
+      2
+    ],
+    [
+      "anti_fouling",
+      2
+    ],
+    [
+      "security_marking",
+      2
+    ],
+    [
+      "footwear",
+      2
+    ],
+    [
+      "beverage_can_overvarnish",
+      2
+    ],
+    [
+      "powder_coating",
+      2
+    ],
+    [
+      "vibration_damping",
+      2
+    ],
+    [
+      "infrastructure",
+      2
+    ],
+    [
+      "marine_offshore",
+      2
+    ],
+    [
+      "waterborne_coating",
+      2
+    ],
+    [
+      "metal_protection",
+      2
+    ],
+    [
+      "easy_open_ends",
+      2
+    ],
+    [
+      "beverage_can_interior",
+      2
+    ],
+    [
+      "industrial_metal_coating",
+      2
+    ],
+    [
+      "plastic_substrates",
+      2
+    ],
+    [
+      "plastic_substrate_coating",
+      2
+    ],
+    [
+      "decorative_architectural",
+      2
+    ],
+    [
+      "food_beverage_can_coating",
+      2
+    ],
+    [
+      "metal_can_coating",
+      2
+    ],
+    [
+      "architectural_coating",
+      2
+    ],
+    [
+      "leading_edge_protection",
+      2
+    ],
+    [
+      "optical_fiber_coloring",
+      2
+    ],
+    [
+      "optical_fiber_ribbon_array",
+      2
+    ],
+    [
+      "optical_waveguide",
+      2
+    ],
+    [
+      "optical_fiber_ink",
+      2
+    ],
+    [
+      "optical_fiber_matrix_material",
+      2
+    ],
+    [
+      "ice_release",
+      2
+    ],
+    [
+      "wind_turbine",
+      2
+    ],
+    [
+      "maintenance",
+      2
+    ],
+    [
+      "aircraft",
+      2
+    ],
+    [
+      "antifouling",
+      2
+    ],
+    [
+      "anticorrosive_primer",
+      2
+    ],
+    [
+      "steel_structures",
+      2
+    ],
+    [
+      "metal_protective_coating",
+      2
+    ],
+    [
+      "bridges",
+      2
+    ],
+    [
+      "synthetic_leather",
+      2
+    ],
+    [
+      "marine_protective",
+      2
+    ],
+    [
+      "optical_fiber_colored_coating",
+      2
+    ],
+    [
+      "optical_fiber_cable",
+      2
+    ],
+    [
+      "bakeware",
+      2
+    ],
+    [
+      "yacht_hull",
+      1
+    ],
+    [
+      "boat_hull",
+      1
+    ],
+    [
+      "vessel_hull",
+      1
+    ],
+    [
+      "fixed_marine_structure",
+      1
+    ],
+    [
+      "marine_vessel_hull",
+      1
+    ],
+    [
+      "underwater_structures",
+      1
+    ],
+    [
+      "biofouling_inhibition",
+      1
+    ],
+    [
+      "dielectric_insulation",
+      1
+    ],
+    [
+      "metal_wire",
+      1
+    ],
+    [
+      "exterior_durable",
+      1
+    ],
+    [
+      "polycarbonate_parts",
+      1
+    ],
+    [
+      "masonry",
+      1
+    ],
+    [
+      "self_cleaning_coatings",
+      1
+    ],
+    [
+      "architectural_solar_reflective",
+      1
+    ],
+    [
+      "universal_primer",
+      1
+    ],
+    [
+      "architectural_aluminum",
+      1
+    ],
+    [
+      "fouling_release_marine",
+      1
+    ],
+    [
+      "battery_thermal_protection",
+      1
+    ],
+    [
+      "structural_fire_protection",
+      1
+    ],
+    [
+      "decorative_metallic",
+      1
+    ],
+    [
+      "self_cleaning",
+      1
+    ],
+    [
+      "anti_fogging",
+      1
+    ],
+    [
+      "drag_reducing",
+      1
+    ],
+    [
+      "outdoor_optics",
+      1
+    ],
+    [
+      "mdf_furniture",
+      1
+    ],
+    [
+      "metal_coating",
+      1
+    ],
+    [
+      "petrochemical",
+      1
+    ],
+    [
+      "civil_steel",
+      1
+    ],
+    [
+      "automotive_authentication",
+      1
+    ],
+    [
+      "road_markings",
+      1
+    ],
+    [
+      "industrial_coil_coating",
+      1
+    ],
+    [
+      "marine_ship_hull",
+      1
+    ],
+    [
+      "automotive_oem_basecoat_clearcoat",
+      1
+    ],
+    [
+      "wood_fiberboard",
+      1
+    ],
+    [
+      "battery_cell_insulation",
+      1
+    ],
+    [
+      "electrolyte_resistant_coating",
+      1
+    ],
+    [
+      "blast_mitigation",
+      1
+    ],
+    [
+      "multilayer_metallic_coating",
+      1
+    ],
+    [
+      "fire_resistant_coating",
+      1
+    ],
+    [
+      "battery_coating",
+      1
+    ],
+    [
+      "easy_clean",
+      1
+    ],
+    [
+      "glass_treatment",
+      1
+    ],
+    [
+      "dirt_repellent_varnish",
+      1
+    ],
+    [
+      "radar_transmission",
+      1
+    ],
+    [
+      "semi_gloss_paint",
+      1
+    ],
+    [
+      "medical_devices",
+      1
+    ],
+    [
+      "implants",
+      1
+    ],
+    [
+      "outdoor_furniture",
+      1
+    ],
+    [
+      "laser_welding",
+      1
+    ],
+    [
+      "optical_fibers",
+      1
+    ],
+    [
+      "camouflage_textile",
+      1
+    ],
+    [
+      "construction_elements",
+      1
+    ],
+    [
+      "metallic_finish",
+      1
+    ],
+    [
+      "decorative_coating",
+      1
+    ],
+    [
+      "adhesion_promoter",
+      1
+    ],
+    [
+      "metal_primer",
+      1
+    ],
+    [
+      "food_and_beverage_contact",
+      1
+    ],
+    [
+      "can_coating",
+      1
+    ],
+    [
+      "automotive_oem_basecoat",
+      1
+    ],
+    [
+      "wood_fiberboard_binder",
+      1
+    ],
+    [
+      "food_can_interior",
+      1
+    ],
+    [
+      "food_packaging",
+      1
+    ],
+    [
+      "clearcoat",
+      1
+    ],
+    [
+      "industrial_metal_protection",
+      1
+    ],
+    [
+      "waterborne_coating_compositions",
+      1
+    ],
+    [
+      "waterborne_architectural_coatings",
+      1
+    ],
+    [
+      "waterborne_adhesives",
+      1
+    ],
+    [
+      "automotive_trim",
+      1
+    ],
+    [
+      "appliance",
+      1
+    ],
+    [
+      "plastic_hardcoat",
+      1
+    ],
+    [
+      "optical_polycarbonate",
+      1
+    ],
+    [
+      "aluminum_substrate_coating",
+      1
+    ],
+    [
+      "industrial_general",
+      1
+    ],
+    [
+      "one_component_waterborne",
+      1
+    ],
+    [
+      "flooring",
+      1
+    ],
+    [
+      "vinyl_flooring",
+      1
+    ],
+    [
+      "pvc_substrate",
+      1
+    ],
+    [
+      "beverage_easy_open_ends",
+      1
+    ],
+    [
+      "metal_panel_coating",
+      1
+    ],
+    [
+      "installation_site_repair",
+      1
+    ],
+    [
+      "sealants",
+      1
+    ],
+    [
+      "encapsulants",
+      1
+    ],
+    [
+      "potting_compositions",
+      1
+    ],
+    [
+      "foul_release",
+      1
+    ],
+    [
+      "architectural_paint_swatches",
+      1
+    ],
+    [
+      "color_visualization",
+      1
+    ],
+    [
+      "battery_thermal_management",
+      1
+    ],
+    [
+      "ev_battery_pack",
+      1
+    ],
+    [
+      "industrial_electrocoat",
+      1
+    ],
+    [
+      "waterborne_adhesive",
+      1
+    ],
+    [
+      "pipe_lining",
+      1
+    ],
+    [
+      "water_pipe_rehabilitation",
+      1
+    ],
+    [
+      "aquaculture",
+      1
+    ],
+    [
+      "aerospace_aircraft_transparency",
+      1
+    ],
+    [
+      "packaging",
+      1
+    ],
+    [
+      "metal_substrate_coating",
+      1
+    ],
+    [
+      "tire_sidewall_decorative",
+      1
+    ],
+    [
+      "elastomeric_substrate_coating",
+      1
+    ],
+    [
+      "rubber_coating",
+      1
+    ],
+    [
+      "decorative_effect_coatings",
+      1
+    ],
+    [
+      "paper_coating",
+      1
+    ],
+    [
+      "cardboard_coating",
+      1
+    ],
+    [
+      "beer_can_coating",
+      1
+    ],
+    [
+      "optical_antireflection",
+      1
+    ],
+    [
+      "photovoltaic",
+      1
+    ],
+    [
+      "security_features",
+      1
+    ],
+    [
+      "light_concentration",
+      1
+    ],
+    [
+      "optical_adhesives",
+      1
+    ],
+    [
+      "oil_gas_pipe",
+      1
+    ],
+    [
+      "cui_coating",
+      1
+    ],
+    [
+      "high_temperature",
+      1
+    ],
+    [
+      "exterior_facade_textured_tinted_coating",
+      1
+    ],
+    [
+      "industrial_powder_coating",
+      1
+    ],
+    [
+      "flexographic_printing_ink",
+      1
+    ],
+    [
+      "gravure_printing_ink",
+      1
+    ],
+    [
+      "ink_jet_printing",
+      1
+    ],
+    [
+      "sealant",
+      1
+    ],
+    [
+      "adhesive",
+      1
+    ],
+    [
+      "gap_filler",
+      1
+    ],
+    [
+      "pottant",
+      1
+    ],
+    [
+      "prepreg",
+      1
+    ],
+    [
+      "liquid_shim",
+      1
+    ],
+    [
+      "aerospace_sealant",
+      1
+    ],
+    [
+      "field_repair",
+      1
+    ],
+    [
+      "pre_molded_parts",
+      1
+    ],
+    [
+      "cementitious_substrate_coating",
+      1
+    ],
+    [
+      "fiber_cement_siding",
+      1
+    ],
+    [
+      "wood_porous_substrate_sealer",
+      1
+    ],
+    [
+      "packaging_coating",
+      1
+    ],
+    [
+      "metal_can_interior_coating",
+      1
+    ],
+    [
+      "exterior_wood_protection",
+      1
+    ],
+    [
+      "clear_varnish",
+      1
+    ],
+    [
+      "white_lacquer",
+      1
+    ],
+    [
+      "interior_can_coating",
+      1
+    ],
+    [
+      "BPA_NI",
+      1
+    ],
+    [
+      "decorative_element",
+      1
+    ],
+    [
+      "security_element",
+      1
+    ],
+    [
+      "anti_counterfeit",
+      1
+    ],
+    [
+      "anti_graffiti",
+      1
+    ],
+    [
+      "parquet_flooring",
+      1
+    ],
+    [
+      "kitchen_cabinets",
+      1
+    ],
+    [
+      "table_tops",
+      1
+    ],
+    [
+      "polyester_films",
+      1
+    ],
+    [
+      "printed_circuit_boards",
+      1
+    ],
+    [
+      "beverage_cans",
+      1
+    ],
+    [
+      "pre_coated_steel_sheet",
+      1
+    ],
+    [
+      "food_contact_packaging",
+      1
+    ],
+    [
+      "metal_closure",
+      1
+    ],
+    [
+      "packaging_interior",
+      1
+    ],
+    [
+      "heat_exchanger",
+      1
+    ],
+    [
+      "sorption_heat_pump",
+      1
+    ],
+    [
+      "hvac",
+      1
+    ],
+    [
+      "air_conditioning",
+      1
+    ],
+    [
+      "appliances",
+      1
+    ],
+    [
+      "intumescent",
+      1
+    ],
+    [
+      "easy_to_clean_coating",
+      1
+    ],
+    [
+      "touch_panel_display",
+      1
+    ],
+    [
+      "solar_panel_screen",
+      1
+    ],
+    [
+      "anti_smudge_optical_coating",
+      1
+    ],
+    [
+      "industrial_adhesive",
+      1
+    ],
+    [
+      "structural_adhesive",
+      1
+    ],
+    [
+      "monobloc_aerosol_can",
+      1
+    ],
+    [
+      "low_gloss_topcoats",
+      1
+    ],
+    [
+      "medical_implant",
+      1
+    ],
+    [
+      "medical_device",
+      1
+    ],
+    [
+      "antimicrobial",
+      1
+    ],
+    [
+      "uv_protective_film",
+      1
+    ],
+    [
+      "optical_film",
+      1
+    ],
+    [
+      "release_liner_construction",
+      1
+    ],
+    [
+      "protective_coating",
+      1
+    ],
+    [
+      "can_coatings",
+      1
+    ],
+    [
+      "lightning_strike_protection",
+      1
+    ],
+    [
+      "composite_surfacing",
+      1
+    ],
+    [
+      "peelable_matrix",
+      1
+    ],
+    [
+      "optical_fiber_primary_coating",
+      1
+    ],
+    [
+      "optical_fiber_secondary_coating",
+      1
+    ],
+    [
+      "optical_fiber_inner_primary_coating",
+      1
+    ],
+    [
+      "optical_fiber_outer_primary_coating",
+      1
+    ],
+    [
+      "fiber_optic_secondary_coating",
+      1
+    ],
+    [
+      "fiber_ribbon_matrix",
+      1
+    ],
+    [
+      "stereolithography",
+      1
+    ],
+    [
+      "dispersion_compensation_gratings",
+      1
+    ],
+    [
+      "optical_fiber_upjacket",
+      1
+    ],
+    [
+      "optical_fiber_upjacketing",
+      1
+    ],
+    [
+      "wire_coating",
+      1
+    ],
+    [
+      "medical_minimal_invasive_illumination",
+      1
+    ],
+    [
+      "sanitary_ware",
+      1
+    ],
+    [
+      "industrial_molded_articles",
+      1
+    ],
+    [
+      "sealant_caulk",
+      1
+    ],
+    [
+      "optical_coatings",
+      1
+    ],
+    [
+      "packaging_film",
+      1
+    ],
+    [
+      "flexible_packaging",
+      1
+    ],
+    [
+      "plastic_coatings",
+      1
+    ],
+    [
+      "furniture_coatings",
+      1
+    ],
+    [
+      "ophthalmic_lens",
+      1
+    ],
+    [
+      "optical_element",
+      1
+    ],
+    [
+      "container_coating",
+      1
+    ],
+    [
+      "plastic",
+      1
+    ],
+    [
+      "furniture",
+      1
+    ],
+    [
+      "multi_layer_coating",
+      1
+    ],
+    [
+      "multilayer_coating",
+      1
+    ],
+    [
+      "industrial_metal",
+      1
+    ],
+    [
+      "optical_lens_hardcoat",
+      1
+    ],
+    [
+      "plastic_film_hardcoat",
+      1
+    ],
+    [
+      "general_substrate",
+      1
+    ],
+    [
+      "optical_window",
+      1
+    ],
+    [
+      "transparent_substrate_coating",
+      1
+    ],
+    [
+      "product_finishing",
+      1
+    ],
+    [
+      "antigrafitti",
+      1
+    ],
+    [
+      "windmill_towers",
+      1
+    ],
+    [
+      "general_protective",
+      1
+    ],
+    [
+      "transparent_protective_coating",
+      1
+    ],
+    [
+      "Security element / hologram optically variable coatings",
+      1
+    ],
+    [
+      "automotive multilayer coating films",
+      1
+    ],
+    [
+      "precoat_metal",
+      1
+    ],
+    [
+      "exterior_architectural",
+      1
+    ],
+    [
+      "ship_hull_coating",
+      1
+    ],
+    [
+      "anti_corrosive_metal_protection",
+      1
+    ],
+    [
+      "anticorrosion",
+      1
+    ],
+    [
+      "static_dissipative",
+      1
+    ],
+    [
+      "Food and beverage packaging internal coating",
+      1
+    ],
+    [
+      "wind_blade_coatings",
+      1
+    ],
+    [
+      "metal_coatings",
+      1
+    ],
+    [
+      "shipping_containers",
+      1
+    ],
+    [
+      "weldable_shop_primer",
+      1
+    ],
+    [
+      "wind_turbine_rotor_blade",
+      1
+    ],
+    [
+      "helicopter",
+      1
+    ],
+    [
+      "ship_propeller",
+      1
+    ],
+    [
+      "erosion_protection",
+      1
+    ],
+    [
+      "metallic_powder_coating",
+      1
+    ],
+    [
+      "aircraft_wing",
+      1
+    ],
+    [
+      "rotor_blade",
+      1
+    ],
+    [
+      "propeller",
+      1
+    ],
+    [
+      "radome",
+      1
+    ],
+    [
+      "fouling_control",
+      1
+    ],
+    [
+      "display_device",
+      1
+    ],
+    [
+      "OLED",
+      1
+    ],
+    [
+      "LCD",
+      1
+    ],
+    [
+      "sensor",
+      1
+    ],
+    [
+      "semiconductor",
+      1
+    ],
+    [
+      "color_filter",
+      1
+    ],
+    [
+      "optical_hardcoat",
+      1
+    ],
+    [
+      "lithography",
+      1
+    ],
+    [
+      "impact resistant powder coating for metallic coil springs",
+      1
+    ],
+    [
+      "marine_cargo_hold",
+      1
+    ],
+    [
+      "leather_retanning",
+      1
+    ],
+    [
+      "textile_treatment",
+      1
+    ],
+    [
+      "hard_surface_cleaner",
+      1
+    ],
+    [
+      "concrete_brick_coating",
+      1
+    ],
+    [
+      "anti_corrosion",
+      1
+    ],
+    [
+      "multilayer automotive clearcoat over basecoat",
+      1
+    ],
+    [
+      "architectural_sealant",
+      1
+    ],
+    [
+      "wood_sealing",
+      1
+    ],
+    [
+      "concrete_sealing",
+      1
+    ],
+    [
+      "dielectric powder coating for metal/aluminum substrates",
+      1
+    ],
+    [
+      "protective",
+      1
+    ],
+    [
+      "ice_release_coating",
+      1
+    ],
+    [
+      "anti_ice",
+      1
+    ],
+    [
+      "decorative",
+      1
+    ],
+    [
+      "biofouling_release",
+      1
+    ],
+    [
+      "biofouling_control",
+      1
+    ],
+    [
+      "automotive_lightweighting",
+      1
+    ],
+    [
+      "metal_cfrp_bonding",
+      1
+    ],
+    [
+      "emulsion_polymerization_surfactant",
+      1
+    ],
+    [
+      "consumer_vehicles",
+      1
+    ],
+    [
+      "industrial_vehicles",
+      1
+    ],
+    [
+      "building_structures",
+      1
+    ],
+    [
+      "automotive_interior",
+      1
+    ],
+    [
+      "steel_protection",
+      1
+    ],
+    [
+      "automotive/electrocoated steel clearcoat",
+      1
+    ],
+    [
+      "high_temperature_steel_surfaces",
+      1
+    ],
+    [
+      "high_temperature_protective",
+      1
+    ],
+    [
+      "shop_primer",
+      1
+    ],
+    [
+      "dirt_pickup_resistance",
+      1
+    ],
+    [
+      "brake_dust_resistance",
+      1
+    ],
+    [
+      "Water-based multilayer automotive coating system; electrocoated plate substrate; first aqueous basecoat, second aqueous basecoat, and clearcoat.",
+      1
+    ],
+    [
+      "heat_resistant_industrial",
+      1
+    ],
+    [
+      "coating_condition_monitoring",
+      1
+    ],
+    [
+      "stain_resistant_coating",
+      1
+    ],
+    [
+      "overhead_conductor_coating",
+      1
+    ],
+    [
+      "photocatalytic_self_cleaning",
+      1
+    ],
+    [
+      "textile_coating",
+      1
+    ],
+    [
+      "upholstery",
+      1
+    ],
+    [
+      "adhesive_film",
+      1
+    ],
+    [
+      "anti_corrosive_coating",
+      1
+    ],
+    [
+      "steel_infrastructure",
+      1
+    ],
+    [
+      "high_heat_resistance",
+      1
+    ],
+    [
+      "corrosion_under_insulation_CUI",
+      1
+    ],
+    [
+      "protective_coatings",
+      1
+    ],
+    [
+      "automotive_industrial",
+      1
+    ],
+    [
+      "non_stick_food_release",
+      1
+    ],
+    [
+      "marine_fouling_control",
+      1
+    ],
+    [
+      "textured_facade",
+      1
+    ],
+    [
+      "building_coating",
+      1
+    ],
+    [
+      "wet_substrate_application",
+      1
+    ],
+    [
+      "consumer_goods",
+      1
+    ],
+    [
+      "aquaculture_net",
+      1
+    ],
+    [
+      "wind_turbine_blade_leading_edge_protection",
+      1
+    ],
+    [
+      "coating_inspection",
+      1
+    ],
+    [
+      "industrial_facilities",
+      1
+    ],
+    [
+      "wind_turbines",
+      1
+    ],
+    [
+      "ships",
+      1
+    ],
+    [
+      "coastal",
+      1
+    ],
+    [
+      "optical_fiber_inner_coating",
+      1
+    ],
+    [
+      "optical_fiber_outer_coating",
+      1
+    ],
+    [
+      "optical_fiber_ribbon_coating",
+      1
+    ],
+    [
+      "optical_fiber_tight_buffer_coating",
+      1
+    ],
+    [
+      "acoustic_insulation",
+      1
+    ],
+    [
+      "high_heat_industrial",
+      1
+    ],
+    [
+      "aqueous_coatings",
+      1
+    ],
+    [
+      "tile_adhesive",
+      1
+    ],
+    [
+      "construction_coatings",
+      1
+    ],
+    [
+      "metal_passivation",
+      1
+    ],
+    [
+      "ZAM_substrate_protection",
+      1
+    ],
+    [
+      "automotive_plastics",
+      1
+    ],
+    [
+      "aerospace_coatings",
+      1
+    ],
+    [
+      "optical_cable",
+      1
+    ],
+    [
+      "telecommunication",
+      1
+    ],
+    [
+      "aerospace_structural_adhesive",
+      1
+    ],
+    [
+      "metal_protective_coatings",
+      1
+    ],
+    [
+      "industrial_finishes",
+      1
+    ],
+    [
+      "anticorrosion_industrial",
+      1
+    ],
+    [
+      "electric_vehicle_battery_pack",
+      1
+    ],
+    [
+      "heat_insulation",
+      1
+    ],
+    [
+      "personal_care",
+      1
+    ],
+    [
+      "agricultural",
+      1
+    ],
+    [
+      "industrial_dispersion",
+      1
+    ],
+    [
+      "radar_transparent_coating",
+      1
+    ],
+    [
+      "coatings",
+      1
+    ],
+    [
+      "printing_inks",
+      1
+    ],
+    [
+      "plastics",
+      1
+    ],
+    [
+      "battery_protection",
+      1
+    ],
+    [
+      "automotive_ev",
+      1
+    ],
+    [
+      "optical_fiber_photocatalysis",
+      1
+    ],
+    [
+      "optical_fiber_antibacterial",
+      1
+    ],
+    [
+      "architectural_decorative",
+      1
+    ],
+    [
+      "waterborne_paint",
+      1
+    ],
+    [
+      "decorative_paint",
+      1
+    ],
+    [
+      "flexible_substrates",
+      1
+    ],
+    [
+      "silicone_rubber_coating",
+      1
+    ],
+    [
+      "heat_sensitive_substrate",
+      1
+    ],
+    [
+      "wood_based_panel",
+      1
+    ],
+    [
+      "building_material",
+      1
+    ],
+    [
+      "solar_cell_module",
+      1
+    ],
+    [
+      "plastics_pvc",
+      1
+    ],
+    [
+      "automotive_clearcoat_bonding",
+      1
+    ],
+    [
+      "adhesive_tape",
+      1
+    ],
+    [
+      "automotive_paint_protection_film",
+      1
+    ],
+    [
+      "surface_protection_film",
+      1
+    ],
+    [
+      "optical_fiber_ribbon_manufacturing",
+      1
+    ],
+    [
+      "high_capacity_optical_communication_network",
+      1
+    ],
+    [
+      "lidar_visibility",
+      1
+    ],
+    [
+      "high_humidity_environment",
+      1
+    ],
+    [
+      "bath_and_spa",
+      1
+    ],
+    [
+      "high_power_laser_fiber",
+      1
+    ],
+    [
+      "fiber_laser",
+      1
+    ],
+    [
+      "fiber_amplifier",
+      1
+    ],
+    [
+      "downhole_sensing",
+      1
+    ],
+    [
+      "optical_telecommunication",
+      1
+    ],
+    [
+      "general_coatings",
+      1
+    ],
+    [
+      "industrial_bonding",
+      1
+    ],
+    [
+      "coating_removal",
+      1
+    ],
+    [
+      "aviation",
+      1
+    ],
+    [
+      "military",
+      1
+    ],
+    [
+      "automotive_plastic_parts",
+      1
+    ],
+    [
+      "architecture_coating",
+      1
+    ],
+    [
+      "antimicrobial_coating",
+      1
+    ]
+  ],
+  "hybrid_like_values": [
+    "antifouling_foul_release",
+    "antifouling_fouling_release",
+    "antifouling_fouling_release_system",
+    "antifouling_marine",
+    "antifouling_marine_coating",
+    "antifouling_paint",
+    "antifouling_topcoat",
+    "fouling_control_coating",
+    "fouling_control_topcoat",
+    "fouling_release_antifouling",
+    "fouling_release_edge_sealant",
+    "fouling_release_ice_release",
+    "fouling_release_topcoat"
+  ]
+}

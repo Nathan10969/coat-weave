@@ -36,7 +36,7 @@ cd coating_kg
 pip install -e .
 
 # 2. Set env (drop into .env or export)
-export OPENAI_API_KEY=sk-xxx              # DashScope key for stage 0.5
+export OPENAI_API_KEY=<your-key>          # DashScope key for stage 0.5
 export OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 export PDF_INPUT_DIR=/data/coating_1/pdfs   # adjust to your A100 path
 export MINERU_OUTPUT_DIR=/data/coating_kg/data/mineru_output

@@ -5,16 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/coat-weave/service
-EnvironmentFile=/opt/coat-weave/service/.env
+WorkingDirectory=/root/coating/coating_api_service
+EnvironmentFile=/root/coating/coating_api_service/.env
 Environment=KG_EXPAND_HOST=127.0.0.1
 Environment=KG_EXPAND_PORT=8021
-ExecStart=/opt/coat-weave/.venv/bin/python /opt/coat-weave/service/kg_tools/kg_expand_http_service.py
+ExecStart=/root/coating/envs/coating/bin/python /root/coating/coating_api_service/kg_tools/kg_expand_http_service.py
 Restart=always
 RestartSec=3
 KillSignal=SIGINT
 TimeoutStopSec=30
-User=coatweave
+User=root
 
 [Install]
 WantedBy=multi-user.target

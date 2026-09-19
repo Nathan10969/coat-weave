@@ -13,8 +13,11 @@
     "聚酯": "polyester",
     "alkyd": "alkyd",
     "醇酸": "alkyd",
-    "silicone": "silicone",
-    "有机硅": "silicone",
+    "silicone": "silicone/polysiloxane",
+    "有机硅": "silicone/polysiloxane",
+    "polysiloxane": "silicone/polysiloxane",
+    "聚硅氧烷": "silicone/polysiloxane",
+    "silicone/polysiloxane": "silicone/polysiloxane",
     "fluoropolymer": "fluoropolymer",
     "氟碳": "fluoropolymer"
   }

@@ -1,55 +1,31 @@
-<p align="center"><img src="docs/assets/hero.svg" alt="CoatWeave" width="100%" /></p>
-
 # CoatWeave
 
-**Historical source snapshot 09** — a source-only milestone toward a tool-using coating research agent.
+## Historical source snapshot 10
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-7c3aed.svg)](LICENSE)
-[![Snapshot](https://img.shields.io/badge/snapshot-09-0f766e.svg)](SNAPSHOT_20260907.md)
+This repository is a public, source-only archive of the tenth frozen CoatWeave
+snapshot. It is not a claim that this snapshot is a complete deployed agent or
+a scientific/production acceptance result.
 
-CoatWeave is evolving toward a coating-domain agent that can plan, call focused tools, retrieve dispersed evidence, and produce traceable answers. Snapshot 09 is not a complete agent or a production release.
+- Source branch: `fix/20260907-retrieval-full-evidence`
+- Source tip: `83b790ed3d6204ea37a5aef5b8bb2be66a04bb07`
+- Snapshot time: `2026-09-08 01:09:01 -07:00`
+- Publication: `snapshot-10` on `main` (manual early-cadence override)
 
-- `extracting/`: patent knowledge-graph extraction, projection, validation, database helpers, prompts, and offline tests.
-- `service/`: API orchestration, routing, dialogue-memory support, and read-only knowledge-graph retrieval tools.
-- `embedding/`: source-only hyperedge indexing and retrieval-evaluation jobs; corpora, indexes, model services, and outputs are excluded.
+The tree contains extraction (`extracting/`), service (`service/`), embedding
+(`embedding/`), retrieval/evidence implementation, prompts, schemas, seed SQL,
+tests, and operational documentation. The public archive excludes source PDFs,
+corpora, database dumps, vector indexes, runtime logs, private incident
+material, production backups, and credentials. Example credential fields are
+empty and must be configured locally.
 
-The retrieval path goes beyond ordinary chunk matching through hybrid search, graph expansion, SQL aggregation, and document-field scanning hooks. Tool invocation alone does not prove evidential support; automated claim verification and end-to-end scientific validation remain roadmap items.
+## Scope and validation
 
-<p align="center"><img src="docs/assets/architecture.svg" alt="CoatWeave snapshot architecture" width="92%" /></p>
-
-## Quick start
-
-```bash
-cd extracting
-python -m venv .venv
-python -m pip install -e ".[dev]"
-python -m coating_kg --help
-pytest -q
-```
-
-The service and embedding jobs have separate dependency and infrastructure requirements. API keys and tokens in the configuration examples are intentionally empty. Database, parser, model, corpus, index, and production services are not included.
-
-## Snapshot record
-
-| Field | Value |
-|---|---|
-| Sequence | `09 / 17` |
-| Source branch | `snapshot/20260907` |
-| Source revision | `bef18b9277efbad2d7a8a3a832264c908cd12977` |
-| Source timestamp | `2026-09-07T19:47:17-07:00` |
-| Publication cadence | Manual early-release override authorized by the repository owner |
-| Publication mode | Sanitized historical source snapshot |
-
-See [the snapshot note](SNAPSHOT_20260907.md) and [public handoff](HANDOFF.md) for scope and validation boundaries.
-
-## Roadmap
-
-- Expose retrieval, read, grep, and document-field scanning through explicit tool contracts.
-- Enforce tool policies in runtime code rather than prompts alone.
-- Add citation-to-claim verification and evidence-quality gates.
-- Evaluate retrieval and answers on frozen coating benchmarks.
-- Extend the retrieval foundation into a complete coating research agent.
+The code and tests are preserved as historical material. Offline syntax, unit
+tests, and CLI checks are release-time checks only; they do not establish model
+quality, live database compatibility, production deployment, or end-to-end
+scientific validity. No paid model/API, GPU, or production service was used for
+this publication.
 
 ## License
 
-MIT © 2026 Nathan10969. Historical authorship remains visible in Git history; publication does not claim every component as newly developed at release time.
+MIT © 2026 Nathan10969.

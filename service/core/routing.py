@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from answering import build_provider_body, extract_provider_text, provider_config, provider_headers, provider_messages_url
-from kg_contract import load_tool_contract, normalize_filter_request, openai_tool_parameters
+from kg_contract import (
+    apply_retrieval_policy,
+    load_tool_contract,
+    normalize_filter_request,
+    openai_tool_parameters,
+    retrieval_policy,
+)
 from demo_config import (
     KG_HYBRID_DEFAULT_CANDIDATE_K,
     KG_HYBRID_DEFAULT_TOP_K,
@@ -1230,45 +1236,43 @@ def build_kg_search_queries(query: str, original_question: str = "", max_variant
     return out
 
 def kg_search_only_requested(question: str) -> bool:
-    lower = question.lower()
+    lower = " ".join(question.casefold().split())
     search_only_terms = [
-        "object_id",
-        "object ids",
-        "hyperedge id",
-        "hyperedge ids",
         "ids only",
-        "candidate ids",
-        "ranked ids",
+        "id only",
+        "only ids",
+        "only object ids",
+        "only object_ids",
+        "only candidate ids",
+        "only hyperedge ids",
+        "object ids only",
+        "candidate ids only",
+        "hyperedge ids only",
     ]
-    if any(term in lower for term in search_only_terms):
-        return True
-    return any(term in question for term in ["只要ID", "只要 id", "候选ID", "候选 id", "object_ids"])
+    english = " " + " ".join(word.strip(".,;:!?()[]\"'") for word in lower.split()) + " "
+    chinese_terms = [
+        "只要id",
+        "只要 id",
+        "只要候选id",
+        "只要候选 id",
+    ]
+    # Negation must qualify the IDs-only phrase, not a later "do not expand".
+    if any(
+        f" {prefix} {term} " in english
+        for prefix in ("not", "not just", "not merely") for term in search_only_terms
+    ) or any(
+        f"{prefix}{term}" in lower
+        for prefix in ("不", "不是", "不要", "并非", "不仅", "不仅仅") for term in chinese_terms
+    ):
+        return False
+    return any(f" {term} " in english for term in search_only_terms) or any(
+        term in lower for term in chinese_terms
+    )
 
 def kg_expand_top_k_for_question(question: str) -> int:
     if kg_search_only_requested(question):
         return 0
-    if analyze_kg_query_semantics(question).get("guard"):
-        return 30
-    lower = question.lower()
-    evidence_terms = [
-        "answer",
-        "evidence",
-        "quote",
-        "page",
-        "table",
-        "where",
-        "mentioned",
-        "test",
-        "result",
-        "method",
-        "compare",
-        "recommend",
-    ]
-    if any(term in lower for term in evidence_terms):
-        return 30
-    if any(term in question for term in ["回答", "证据", "引用", "页", "表", "哪里", "提到", "测试", "试验", "结果", "方法", "对比", "推荐", "怎么样"]):
-        return 30
-    return 30
+    return retrieval_policy()["expand_top_k"]
 
 KG_TOOL_CONTRACT = load_tool_contract()
 AGGREGATE_INTENTS = set(KG_TOOL_CONTRACT["aggregate"]["intents"])
@@ -1432,6 +1436,8 @@ PAGINATION_FOLLOWUP_TERMS = (
 
 def pagination_followup_request(question: str) -> bool:
     text = str(question or "").strip().casefold()
+    if any(term in text for term in ("next page", "\u4e0b\u4e00\u9875")):
+        return True
     return bool(text) and len(text) <= 40 and any(term.casefold() in text for term in PAGINATION_FOLLOWUP_TERMS)
 
 
@@ -1459,6 +1465,13 @@ def pagination_route_from_observation(question: str, observation: dict[str, Any]
         "expand_top_k": kg_expand_top_k_for_question(question),
         "reason": "continue previous ranked candidate pool",
     }
+    if "result_mode" in result:
+        call["result_mode"] = result["result_mode"]
+    call = apply_retrieval_policy(
+        call,
+        candidate_only=(result.get("retrieval_budget") or {}).get("mode") == "candidate_only"
+        or kg_search_only_requested(question),
+    )
     return {
         "router": "deterministic_candidate_pagination",
         "needs_tools": True,
@@ -1470,11 +1483,34 @@ def pagination_route_from_observation(question: str, observation: dict[str, Any]
 
 
 def latest_hybrid_search_observation() -> dict[str, Any] | None:
+    """Resume only the latest search, optionally followed by its own expansion."""
     rows = read_jsonl(_app_value("TOOL_OBSERVATIONS", TOOL_OBSERVATIONS))
+    expansion_parents = []
     for row in reversed(rows):
         result = row.get("result") if isinstance(row, dict) else None
-        if row.get("tool") == "kg.hybrid_search" and isinstance(result, dict) and isinstance(result.get("pagination"), dict):
-            return row
+        if not isinstance(result, dict):
+            return None
+        if row.get("tool") == "kg.expand_hyperedge_multihop":
+            parent = result.get("planner_parent_tool_observation_id")
+            if not parent:
+                return None
+            expansion_parents.append(parent)
+            continue
+        if row.get("tool") != "kg.hybrid_search" or not isinstance(result.get("pagination"), dict):
+            return None
+        if result.get("status") in {"error", "unsupported"} or row.get("status") in {"error", "unsupported"}:
+            return None
+        if any(parent != row.get("id") for parent in expansion_parents):
+            return None
+        event = load_scope_state().get("last_scope_event") or {}
+        if event:
+            try:
+                if datetime.fromisoformat(event["resolved_at"]) >= datetime.fromisoformat(row["created_at"]):
+                    return None
+            except (KeyError, TypeError, ValueError):
+                # Without ordering evidence, never revive a cursor across a scope event.
+                return None
+        return row
     return None
 
 def contextual_kg_followup_question(question: str) -> str:
@@ -2231,10 +2267,15 @@ def sanitize_tool_routing(raw: dict[str, Any], question: str, *, router: str) ->
             cleaned_call["max_evidence_per_item"] = int_or_default(call.get("max_evidence_per_item"), 5)
         elif tool == "kg.hybrid_search":
             cleaned_call["query"] = build_kg_search_query(query)[:500]
-            cleaned_call["top_k"] = clamp_int(call.get("top_k"), KG_HYBRID_DEFAULT_TOP_K, 1, 50)
-            cleaned_call["candidate_k"] = clamp_int(
-                call.get("candidate_k"), KG_HYBRID_DEFAULT_CANDIDATE_K, cleaned_call["top_k"], 500
+            budget_call = apply_retrieval_policy(
+                {**call, "_candidate_only_browse": False},
+                candidate_only=kg_search_only_requested(question),
             )
+            for key in retrieval_policy():
+                cleaned_call[key] = budget_call[key]
+            cleaned_call["retrieval_budget"] = budget_call["retrieval_budget"]
+            cleaned_call["result_mode"] = budget_call["result_mode"]
+            cleaned_call["_candidate_only_browse"] = budget_call["_candidate_only_browse"]
             cleaned_call["offset"] = clamp_int(
                 call.get("offset"),
                 0,
@@ -2244,9 +2285,12 @@ def sanitize_tool_routing(raw: dict[str, Any], question: str, *, router: str) ->
             receipt = normalize_filter_request(tool, call.get("filters"))
             cleaned_call["filters"] = receipt["effective_filters"]
             cleaned_call["requested_filters"] = receipt["requested_filters"]
-            cleaned_call["unsupported_constraints"] = receipt["unsupported_constraints"]
-            cleaned_call["route_adjustments"] = receipt["route_adjustments"]
-            cleaned_call["expand_top_k"] = clamp_int(call.get("expand_top_k"), 30, 0, 30)
+            cleaned_call["unsupported_constraints"] = list(dict.fromkeys(
+                receipt["unsupported_constraints"] + budget_call["unsupported_constraints"]
+            ))
+            cleaned_call["route_adjustments"] = list(dict.fromkeys(
+                receipt["route_adjustments"] + budget_call["route_adjustments"]
+            ))
         elif tool == "kg.doc_field_scan":
             cleaned_call["doc_ids"] = normalize_string_list(call.get("doc_ids"))[:5]
             allowed_groups = set(KG_TOOL_CONTRACT["tools"][tool]["allowed_groups"])
@@ -2351,7 +2395,7 @@ def fallback_tool_routing(question: str, *, reason: str = "keyword fallback") ->
                 "top_k": KG_HYBRID_DEFAULT_TOP_K,
                 "candidate_k": KG_HYBRID_DEFAULT_CANDIDATE_K,
                 "filters": filters,
-                "expand_top_k": 30,
+                "expand_top_k": kg_expand_top_k_for_question(question),
                 "reason": "emergency coating KG search using the original question",
             }
         )
@@ -2380,6 +2424,8 @@ def _kg_tools_openai_format() -> list[dict[str, Any]]:
         "kg.hybrid_search": (
             "Coating KG natural-language search for materials, substrates, properties, tests, "
             "examples, patents, performance, and evidence. Preserve every user constraint in filters. "
+            "Set result_mode=candidates for candidate-only listings or requests not to expand evidence; "
+            "otherwise use result_mode=evidence. "
             "For material names, include useful Chinese and English aliases in materials."
         ),
         "kg.sql_aggregate": (
@@ -2433,7 +2479,7 @@ def _router_system_prompt() -> str:
         "- explicit hyperedge object_id (HE_xxx_xxx) -> kg_expand_hyperedge_multihop\n"
         "- 'how many', 'list all', 'count', '统计', '多少', '几种' -> kg_sql_aggregate\n"
         "- active scope on one patent + doc-local question (panel, layer, protocol) -> kg_doc_field_scan\n"
-        "- everything else coating-domain -> kg_hybrid_search with expand_top_k=30\n"
+        "- everything else coating-domain -> kg_hybrid_search; retrieval budgets are service-managed\n"
         "For Chinese coating queries, include useful English search terms in the query argument."
     )
 
@@ -2465,11 +2511,14 @@ def _tool_call_to_internal_call(tool_call: dict[str, Any], question: str) -> dic
     call: dict[str, Any] = {"tool": internal_name, "reason": "llm function call"}
     if internal_name == "kg.hybrid_search":
         call["query"] = (str(args.get("query") or question)).strip() or question
-        call["top_k"] = args.get("top_k") or KG_HYBRID_DEFAULT_TOP_K
-        call["candidate_k"] = args.get("candidate_k") or KG_HYBRID_DEFAULT_CANDIDATE_K
+        for key in retrieval_policy():
+            if key in args:
+                call[key] = args[key]
+        if "result_mode" in args:
+            call["result_mode"] = args["result_mode"]
         call["filters"] = args.get("filters") or {}
-        if "expand_top_k" in args:
-            call["expand_top_k"] = args["expand_top_k"]
+        if "offset" in args:
+            call["offset"] = args["offset"]
     elif internal_name == "kg.sql_aggregate":
         call["intent"] = args.get("intent") or ""
         call["target"] = args.get("target") or ""
@@ -2527,7 +2576,7 @@ def route_tools_with_qwen(
         {"role": "system", "content": _router_system_prompt()},
         {"role": "user", "content": user_content},
     ]
-    body = build_provider_body({**cfg, "enable_thinking": False}, messages, temperature=0, max_tokens=512, stream=False)
+    body = build_provider_body({**cfg, "enable_thinking": False}, messages, temperature=0, max_tokens=cfg["max_output_tokens"], stream=False)
     body["tools"] = _kg_tools_openai_format()
     body["tool_choice"] = "auto"
 
@@ -2706,9 +2755,15 @@ def _check_keyword_routes(ctx: RouterContext) -> dict[str, Any] | None:
     if ctx.scope_resolution.get("scope_action") == "clarify":
         return clarify_scope_route(ctx.question, ctx.scope_resolution)
     if pagination_followup_request(ctx.question):
-        previous = latest_hybrid_search_observation()
+        scope_changed = ctx.scope_resolution.get("scope_action") in {"clear_global", "set_new", "use_history"}
+        previous = None if scope_changed else latest_hybrid_search_observation()
         if previous is not None:
             return pagination_route_from_observation(ctx.question, previous)
+        return {
+            "router": "deterministic_pagination_unavailable", "needs_tools": False, "calls": [],
+            "plan_type": "answer_directly", "confidence": 1.0,
+            "answer_directly_reason": "No continuable cursor in the latest plan and scope; cannot page an older search or switch retrieval plans.",
+        }
     if ctx.scope_resolution.get("scope_action") in {"set_new", "use_history"} and doc_scope_only_statement(ctx.question):
         return scope_update_route(ctx.question, ctx.scope_resolution)
     if unresolved_doc_local_reference(ctx.question, ctx.scope_resolution):
@@ -2785,5 +2840,10 @@ def _decide_route(question: str) -> dict[str, Any]:
 
 def route_tools(question: str) -> dict[str, Any]:
     route = _decide_route(question)
+    route = {**route, "calls": [
+        apply_retrieval_policy(call, candidate_only=kg_search_only_requested(question))
+        if call.get("tool") == "kg.hybrid_search" else call
+        for call in route.get("calls", [])
+    ]}
     _record_route_decision(question, route)
     return route

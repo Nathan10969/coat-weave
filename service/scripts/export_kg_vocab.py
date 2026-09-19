@@ -20,7 +20,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-KG_DIR = Path(os.environ.get("KG_AGGREGATE_DIR", "./data/kg_aggregate"))
+KG_DIR = Path(os.environ.get("KG_AGGREGATE_DIR", "/root/coating/embedding/data/kg_286_aggregate"))
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "config" / "kg_filter_vocab.json"
 
 
