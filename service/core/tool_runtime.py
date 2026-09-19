@@ -33,6 +33,7 @@ from routing import (
     infer_aggregate_target,
     kg_search_only_requested,
     load_kg_filter_vocab,
+    replan_tools_after_feedback,
     route_tools,
 )
 from scope_state import _app_value
@@ -40,6 +41,7 @@ from tool_clients import (
     kg_doc_field_scan,
     kg_expand_hyperedge_multihop,
     kg_hybrid_search,
+    kg_lookup_vocabulary,
     kg_sql_aggregate,
 )
 
@@ -780,6 +782,7 @@ def record_hybrid_with_expansion(
     turn_id: str | None,
     route_id: str,
     parent_id: str | None = None,
+    correct_call: Any = None,
 ) -> None:
     """Share the evidence path between normal retrieval and doc-scan fallback."""
     result = run_kg_hybrid_search_for_call(call, question, query)
@@ -788,7 +791,7 @@ def record_hybrid_with_expansion(
     if parent_id is not None:
         result["planner_parent_tool_observation_id"] = parent_id
     budget = result["retrieval_budget"]
-    object_ids = [] if result.get("error") else select_expand_object_ids(
+    object_ids = [] if result.get("error") or result.get("status") == "unsupported" else select_expand_object_ids(
         result, budget["effective"]["expand_top_k"], question,
     )
     if not result.get("error"):
@@ -799,6 +802,14 @@ def record_hybrid_with_expansion(
         error=result.get("error"),
     )
     observations.append(observation)
+    if result.get("status") == "unsupported" and correct_call is not None:
+        corrected = correct_call(call, result)
+        if corrected is not None:
+            record_hybrid_with_expansion(
+                observations, corrected, question, corrected.get("query") or query,
+                turn_id=turn_id, route_id=route_id, parent_id=observation.get("id"),
+            )
+        return
     if not object_ids:
         return
     expand_result = run_kg_expand_for_call(call, object_ids, budget=budget)
@@ -825,7 +836,7 @@ def hybrid_fallback_call_from_doc_scan(
     filters = normalize_kg_search_filters(call.get("filters"))
     if doc_ids:
         filters["doc_ids"] = doc_ids
-    requested_filters = {**filters, **(call.get("requested_filters") or {})}
+    requested_filters = {**filters, **(call.get("filters") or {}), **(call.get("requested_filters") or {})}
     for alias in load_tool_contract()["filter_aliases"]["doc_ids"]:
         requested_filters.pop(alias, None)
     requested_filters["doc_ids"] = list(filters.get("doc_ids") or [])
@@ -885,6 +896,20 @@ def retry_empty_aggregate(
     """
     if empty_result.get("status") == "unsupported":
         return empty_result
+    coverage = empty_result.get("classification_coverage") or {}
+    classification_incomplete = (
+        empty_result.get("classification_complete") is False
+        or coverage.get("complete_for_requested_axes") is False
+    )
+    cohort_unavailable = empty_result.get("cohort_available") is False
+    if classification_incomplete or cohort_unavailable:
+        empty_result["warnings"] = [warning for warning in normalize_string_list(empty_result.get("warnings"))
+                                    if warning != AGGREGATE_EMPTY_TRUE_ZERO_WARNING]
+        if classification_incomplete:
+            append_tool_warning(empty_result, "classification_coverage_incomplete_not_evidence_of_absence")
+        if cohort_unavailable:
+            append_tool_warning(empty_result, "aggregate_cohort_unavailable_not_evidence_of_absence")
+        return empty_result
     append_tool_warning(empty_result, AGGREGATE_EMPTY_TRUE_ZERO_WARNING)
     empty_result.setdefault("route_adjustments", [])
     return empty_result
@@ -903,7 +928,53 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
     observations: list[dict[str, Any]] = []
     route = _app_value("route_tools", route_tools)(question)
     route_id = route_id or f"route_{int(time.time() * 1000)}_{stable_id('route', question)[6:]}"
-    for call in route.get("calls", []):
+    correction_attempted = False
+
+    def correct_call(call: dict[str, Any], result: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal correction_attempted
+        if correction_attempted:
+            return None
+        correction_attempted = True
+        decision = _app_value("replan_tools_after_feedback", replan_tools_after_feedback)(
+            question, {**route, "calls": [call]}, [{"call": call, "result": result}], correction=True,
+        )
+        return next(iter(decision.get("calls", [])), None)
+
+    def run_lookup(call: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = _app_value("kg_lookup_vocabulary", kg_lookup_vocabulary)(
+                call.get("query") or question, dimension=call.get("dimension"), limit=call.get("limit", 20),
+            )
+        except Exception as exc:  # noqa: BLE001
+            result = {"status": "error", "error": str(exc), "candidates": []}
+        result["usage_boundary"] = "vocabulary_candidates_not_patent_evidence"
+        if result.get("status") in {"unsupported", "error"}:
+            result["pending_question"] = question
+            result["lookup_resolution_incomplete"] = True
+        if call.get("parameter_correction"):
+            result["parameter_correction"] = call["parameter_correction"]
+        observations.append(_app_value("record_tool_observation", record_tool_observation)(
+            question, result, error=result.get("error"), tool="kg.lookup_vocabulary",
+            turn_id=turn_id, route_id=route_id,
+        ))
+        return result
+
+    lookup_feedback = []
+    for call in route.get("calls", [])[:3]:
+        if call.get("tool") != "kg.lookup_vocabulary":
+            continue
+        result = run_lookup(call)
+        if result.get("status") == "unsupported":
+            corrected = correct_call(call, result)
+            if corrected is not None:
+                call = corrected
+                result = run_lookup(call)
+        lookup_feedback.append({"call": call, "result": result})
+    if lookup_feedback:
+        route = _app_value("replan_tools_after_feedback", replan_tools_after_feedback)(question, route, lookup_feedback)
+    pending_calls = list(route.get("calls", []))
+    while pending_calls:
+        call = pending_calls.pop(0)
         tool = call.get("tool")
         query = call.get("query") or question
         fallback_hybrid_call: dict[str, Any] | None = None
@@ -918,6 +989,7 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
             elif tool == "kg.hybrid_search":
                 record_hybrid_with_expansion(
                     observations, call, question, query, turn_id=turn_id, route_id=route_id,
+                    correct_call=correct_call,
                 )
                 continue
             elif tool == "kg.sql_aggregate":
@@ -962,6 +1034,7 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
                     record_hybrid_with_expansion(
                         observations, fallback_hybrid_call, question, query,
                         turn_id=turn_id, route_id=route_id,
+                        correct_call=correct_call,
                     )
                     continue
                 result = _app_value("kg_doc_field_scan", kg_doc_field_scan)(
@@ -995,6 +1068,10 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
                 route_id=route_id,
             )
             observations.append(observation)
+            if result.get("status") == "unsupported":
+                corrected = correct_call(call, result)
+                if corrected is not None:
+                    pending_calls.insert(0, corrected)
             if tool == "kg.doc_field_scan" and result.get("status") == "ok" and not kg_search_only_requested(question):
                 budgeted = apply_retrieval_policy(call)
                 object_ids = select_expand_object_ids(result, budgeted["expand_top_k"], question)
@@ -1009,6 +1086,7 @@ def maybe_run_tools(question: str, *, turn_id: str | None = None, route_id: str 
                 record_hybrid_with_expansion(
                     observations, fallback_hybrid_call, question, query,
                     turn_id=turn_id, route_id=route_id, parent_id=observation.get("id"),
+                    correct_call=correct_call,
                 )
         except Exception as exc:  # noqa: BLE001
             observations.append(

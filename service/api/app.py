@@ -219,6 +219,10 @@ def create_app(
     def sql_aggregate(request: ToolProxyRequest) -> dict[str, Any]:
         return engine.call_tool("kg.sql_aggregate", request.payload)
 
+    @app.post("/api/v1/coating/tools/lookup_vocabulary", dependencies=[Depends(_auth)])
+    def lookup_vocabulary(request: ToolProxyRequest) -> dict[str, Any]:
+        return engine.call_tool("kg.lookup_vocabulary", request.payload)
+
     @app.post("/api/v1/coating/tools/doc_field_scan", dependencies=[Depends(_auth)])
     def doc_field_scan(request: ToolProxyRequest) -> dict[str, Any]:
         return engine.call_tool("kg.doc_field_scan", request.payload)

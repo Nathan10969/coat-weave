@@ -22,11 +22,14 @@ if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
 
 import expand_hyperedge_multihop as expand  # noqa: E402
+import query_classification as classification  # noqa: E402
 from kg_contract import (  # noqa: E402
+    expand_material_values,
     load_coating_family_aliases,
     load_coating_family_multi_value,
     load_tool_contract,
     normalize_filter_request,
+    property_family_canonical_ids,
     resolve_coating_family_token,
 )
 from demo_text import doc_id_lookup_key  # noqa: E402
@@ -80,6 +83,7 @@ MAX_SEARCH_CANDIDATE_K = int(os.environ.get("KG_HYBRID_MAX_CANDIDATE_K", "500"))
 # Keep enough room for document-level buckets (e.g. unknown_year exact5) after doc dedupe.
 MAX_AGGREGATE_EXAMPLES_PER_ITEM = int(os.environ.get("KG_AGGREGATE_MAX_EXAMPLES_PER_ITEM", "8"))
 KG_TOOL_CONTRACT = load_tool_contract()
+PROFILE_QUERY_AXES = tuple(classification.axis_definitions())
 AGGREGATE_INTENTS = set(KG_TOOL_CONTRACT["aggregate"]["intents"])
 AGGREGATE_TARGETS = set(KG_TOOL_CONTRACT["aggregate"]["targets"])
 AGGREGATE_GROUP_BY = set(KG_TOOL_CONTRACT["aggregate"]["group_by"])
@@ -96,6 +100,252 @@ MAX_AGGREGATE_LIMIT = int(os.environ.get("KG_AGGREGATE_MAX_LIMIT", "200"))
 _STORE = None
 _STORE_LOCK = threading.Lock()
 _FACTS_BY_CONTEXT_CACHE: dict[int, tuple[int, dict[tuple[str, str], list[dict[str, Any]]]]] = {}
+_CLASSIFICATION_VIEW_CACHE: tuple[Any, str, int, dict[str, Any]] | None = None
+
+
+class CohortUnavailable(RuntimeError):
+    """The authoritative DB cohort could not be established."""
+
+
+class HyperedgeCohort(set[str]):
+    """DB IDs with the read-only identity fields needed for source-qualified binding."""
+
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        super().__init__(str(row[0]) for row in rows if row[0])
+        self.records: dict[str, tuple[str, dict[str, Any]]] = {}
+        self.conflicts: set[str] = set()
+        for object_id, doc_id, metadata in rows:
+            key = str(object_id)
+            record = (str(doc_id or ""), metadata if isinstance(metadata, dict) else {})
+            if key in self.records and self.records[key] != record:
+                self.conflicts.add(key)
+            self.records[key] = record
+
+
+def get_query_classification_view(store: Any) -> dict[str, Any]:
+    global _CLASSIFICATION_VIEW_CACHE
+    version = str(classification.load_registry()["version"])
+    records = store_get(store, "full_records_by_doc") or {}
+    size = sum(len(rows) for rows in records.values())
+    cached = _CLASSIFICATION_VIEW_CACHE
+    if cached and cached[0] is store and cached[1:3] == (version, size):
+        return cached[3]
+    axes = PROFILE_QUERY_AXES
+    profiles: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    contexts: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    context_conflicts: set[tuple[str, str, str, str]] = set()
+    for (kind, doc_id), variants in records.items():
+        if kind == "patent_profile":
+            for record in variants:
+                source = str(record["provenance"].get("source_id") or "")
+                profiles.setdefault((source, doc_id), []).append(record)
+        elif kind in {"facts", "evidence"}:
+            for record in variants:
+                source = str(record["provenance"].get("source_id") or "")
+                context = contexts.setdefault((source, doc_id), {"facts": {}, "evidence": {}})
+                record_id = record["id"]
+                if not record_id:
+                    continue
+                conflict_key = (source, doc_id, kind, record_id)
+                if conflict_key in context_conflicts:
+                    continue
+                if record_id in context[kind] and context[kind][record_id] != record["raw"]:
+                    context_conflicts.add(conflict_key)
+                    context[kind].pop(record_id)
+                else:
+                    context[kind][record_id] = record["raw"]
+    rows: list[dict[str, Any]] = []
+    projections: dict[tuple[str, str], dict[str, Any]] = {}
+    for (kind, doc_id), variants in records.items():
+        if kind != "hyperedges":
+            continue
+        for record in variants:
+            origin = dict(record["provenance"])
+            source = str(origin.get("source_id") or "")
+            source_profiles = profiles.get((source, doc_id), []) if source else []
+            if len(source_profiles) == 1:
+                if (source, doc_id) not in projections:
+                    projections[(source, doc_id)] = classification.project_profile(source_profiles[0]["raw"], source)
+                projected = projections[(source, doc_id)]
+                state = "profile_present"
+            else:
+                projected = {"version": version, "values": {axis: [] for axis in axes},
+                             "mappings": [], "missing_axes": list(axes), "unmapped": []}
+                state = "ambiguous_profile" if source_profiles else "missing_profile" if source else "missing_source"
+            raw = dict(record["raw"])
+            raw.setdefault("doc_id", doc_id)
+            raw["object_id"] = origin.get("object_id") or raw_hyperedge_object_id(raw)
+            raw["_query_context"] = contexts.get((source, doc_id), {"facts": {}, "evidence": {}})
+            raw["_query_classification"] = {**projected, "state": state, "source_id": source,
+                                             "provenance": origin, "profile_provenance": [r["provenance"] for r in source_profiles]}
+            rows.append(raw)
+    if not records:
+        # Compatibility stores have no source provenance; never borrow their profiles for new axes.
+        for original in _legacy_store_hyperedges(store):
+            raw = dict(original)
+            raw["_query_classification"] = {"version": version, "values": {a: [] for a in axes},
+                "state": "missing_source", "source_id": "", "mappings": [], "unmapped": [],
+                "missing_axes": list(axes), "provenance": {}}
+            rows.append(raw)
+    by_object: dict[str, dict[str, Any]] = {}
+    ambiguous: set[str] = set()
+    for raw in rows:
+        object_id = raw_hyperedge_object_id(raw)
+        if object_id in by_object and by_object[object_id] != raw:
+            ambiguous.add(object_id)
+        by_object[object_id] = raw
+    for object_id in ambiguous:
+        by_object.pop(object_id, None)
+    view = {"version": version, "rows": list(by_object.values()), "binding_rows": rows, "by_object_id": by_object,
+            "ambiguous_object_ids": sorted(ambiguous), "context_conflicts": sorted(context_conflicts)}
+    _CLASSIFICATION_VIEW_CACHE = (store, version, size, view)
+    return view
+
+
+def bind_query_classification_view(store: Any, cohort: set[str]) -> dict[str, Any]:
+    view = get_query_classification_view(store)
+    if not isinstance(cohort, HyperedgeCohort):
+        return view  # ID-only compatibility callers support exact binding, never the legacy fallback.
+    legacy_source = "/root/coating/embedding/data/kg_286_aggregate"
+    by_natural: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for raw in view["binding_rows"]:
+        by_natural.setdefault((raw_hyperedge_doc_id(raw), raw_hyperedge_id(raw)), []).append(raw)
+
+    def compatible(raw: dict[str, Any], doc: str, meta: dict[str, Any]) -> bool:
+        if raw_hyperedge_doc_id(raw) != doc:
+            return False
+        origin = raw["_query_classification"]["source_id"]
+        provenance = meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {}
+        if any(value and value != origin for value in (meta.get("source_id"), provenance.get("source_id"))):
+            return False
+        for key in ("doc_id", "context_id", "hyperedge_id", "raw_hyperedge_id"):
+            actual = raw_hyperedge_id(raw) if key in {"hyperedge_id", "raw_hyperedge_id"} else raw.get(key)
+            if meta.get(key) and actual and meta[key] != actual:
+                return False
+        raw_evidence = set(normalize_filter_values(raw.get("evidence_ids"))) | set(normalize_filter_values(raw.get("evidence_id")))
+        db_evidence = set(normalize_filter_values(meta.get("evidence_ids"))) | set(normalize_filter_values(meta.get("evidence_id")))
+        return not (raw_evidence and db_evidence and not db_evidence.issubset(raw_evidence))
+
+    bound: dict[str, dict[str, Any]] = {}
+    ambiguous = set(cohort.conflicts)
+    for oid, (doc, meta) in cohort.records.items():
+        if oid in ambiguous or oid in view["ambiguous_object_ids"]:
+            ambiguous.add(oid)
+            continue
+        raw = view["by_object_id"].get(oid)
+        method = "exact_object_id"
+        if raw is None:
+            natural_id = oid
+            if "raw_hyperedge_id" in meta:
+                metadata_id = meta["raw_hyperedge_id"]
+                if (not isinstance(metadata_id, str) or not metadata_id
+                        or metadata_id != metadata_id.strip() or "::" in metadata_id):
+                    continue
+                if oid not in {metadata_id, f"{doc}::{metadata_id}"}:
+                    continue
+                natural_id = metadata_id
+            elif "::" in oid:
+                continue  # Qualified DB IDs require an explicit, consistent raw identity.
+            candidates = by_natural.get((doc, natural_id), [])
+            provenance = meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {}
+            source_hint = meta.get("source_id") or provenance.get("source_id")
+            if source_hint:
+                candidates = [row for row in candidates if row["_query_classification"]["source_id"] == source_hint]
+            if len(candidates) > 1:
+                ambiguous.add(oid)
+                continue
+            raw = candidates[0] if candidates else None
+            if (raw is None or raw["_query_classification"]["source_id"] != legacy_source
+                    or meta.get("source") != "hyperedges.jsonl"
+                    or raw_hyperedge_object_id(raw) not in {natural_id, f"{doc}::{natural_id}"}):
+                continue
+            method = "legacy_source_doc_hyperedge"
+        if raw_hyperedge_doc_id(raw) != doc:
+            continue
+        # Existing exact IDs already carry source identity; DB source_id may be a collection label.
+        if method == "legacy_source_doc_hyperedge" and not compatible(raw, doc, meta):
+            continue
+        bound[oid] = {**raw, "object_id": oid, "_query_db_binding": {
+            "method": method, "raw_object_id": raw_hyperedge_object_id(raw), "db_object_id": oid}}
+    return {**view, "rows": list(bound.values()), "by_object_id": bound, "ambiguous_object_ids": sorted(ambiguous)}
+
+
+def profile_query_values(raw: dict[str, Any], axis: str) -> list[str]:
+    return list((raw.get("_query_classification") or {}).get("values", {}).get(axis, []))
+
+
+def profile_query_matches(raw: dict[str, Any], filters: dict[str, Any]) -> bool:
+    return all(not filters.get(axis) or set(filters[axis]).intersection(profile_query_values(raw, axis))
+               for axis in PROFILE_QUERY_AXES)
+
+
+def classification_coverage(
+    rows: list[dict[str, Any]], view: dict[str, Any], allowed: set[str], *, axes_in_use: list[str] | None = None,
+) -> dict[str, Any]:
+    source_docs = {(str((raw.get("_query_classification") or {}).get("source_id") or ""), raw_hyperedge_doc_id(raw)):
+                   raw.get("_query_classification") or {} for raw in rows}
+    axes: dict[str, dict[str, int]] = {}
+    for axis in PROFILE_QUERY_AXES:
+        counts = dict(mapped=0, partial=0, missing_profile=0, missing_source=0, ambiguous_profile=0, unclassified=0)
+        for profile in source_docs.values():
+            state = profile.get("state", "missing_source")
+            if state == "profile_present":
+                state = ("partial" if profile.get("unmapped") else "mapped") if profile.get("values", {}).get(axis) else "unclassified"
+            counts[state] += 1
+        axes[axis] = counts
+    requested_axes = list(dict.fromkeys(axes_in_use or []))
+    eligible_source_docs = {(str(raw["_query_classification"].get("source_id") or ""), raw_hyperedge_doc_id(raw))
+                            for raw in view["rows"] if raw_hyperedge_object_id(raw) in allowed}
+    conflicts = [conflict for conflict in view["context_conflicts"] if conflict[:2] in eligible_source_docs]
+    complete = not conflicts and not (allowed - set(view["by_object_id"])) and all(
+        axes[axis]["mapped"] == len(source_docs) for axis in requested_axes)
+    return {"scope": "db_cohort_before_profile_axes", "source_doc_count": len(source_docs),
+            "requested_axes": requested_axes, "complete_for_requested_axes": complete,
+            "publication_count": len({doc_id_lookup_key(doc) or doc for _, doc in source_docs}),
+            "axes": axes, "registry_version": view["version"],
+            "db_object_count": len(allowed), "unbound_db_object_count": len(allowed - set(view["by_object_id"])),
+            "ambiguous_db_object_count": len(allowed.intersection(view["ambiguous_object_ids"])),
+            "legacy_db_binding_count": sum(raw.get("_query_db_binding", {}).get("method") == "legacy_source_doc_hyperedge" for raw in rows),
+            "context_conflict_count": len(conflicts),
+            "unmapped_profile_count": sum(bool(profile.get("unmapped")) for profile in source_docs.values()),
+            "unresolved_examples": [{"source_id": source, "doc_id": doc, "state": profile.get("state"),
+                                     "missing_axes": profile.get("missing_axes", []), "unmapped": profile.get("unmapped", [])}
+                                    for (source, doc), profile in source_docs.items()
+                                    if profile.get("unmapped") or profile.get("state") != "profile_present"][:5]}
+
+
+def property_family_matches(raw: dict[str, Any], filters: dict[str, Any]) -> bool:
+    families = normalize_filter_values(filters.get("property_families"))
+    if not families:
+        return True
+    if any(family not in PROPERTY_FAMILY_CANONICAL_IDS for family in families):
+        return False
+    wanted = {value.casefold() for family in families for value in PROPERTY_FAMILY_CANONICAL_IDS[family]}
+    actual = raw.get("property_canonical_id") or as_canonical(raw.get("property"))
+    return bool(actual and str(actual).casefold() in wanted)
+
+
+def validate_property_receipt(receipt: dict[str, Any]) -> None:
+    for family in normalize_filter_values(receipt["effective_filters"].get("property_families")):
+        if family not in PROPERTY_FAMILY_CANONICAL_IDS or not PROPERTY_FAMILY_CANONICAL_IDS[family]:
+            token = f"property_families:{family}"
+            if token not in receipt["unsupported_constraints"]:
+                receipt["unsupported_constraints"].append(token)
+
+
+def cohort_error(tool: str) -> dict[str, Any]:
+    return {"tool": tool, "status": "error", "error_code": "cohort_unavailable",
+            "error": "Authoritative retrieval cohort is unavailable", "summary": {}, "items": [],
+            "cohort_available": False}
+
+
+def attach_classification_coverage(payload: dict[str, Any], coverage: dict[str, Any]) -> None:
+    payload["classification_coverage"] = coverage
+    if coverage:
+        payload["cohort_available"] = True
+        payload["classification_complete"] = coverage["complete_for_requested_axes"]
+        if not payload["classification_complete"]:
+            payload.setdefault("warnings", []).append("classification_coverage_incomplete_not_evidence_of_absence")
 
 
 def now_iso() -> str:
@@ -568,96 +818,7 @@ AGGREGATE_FIELD_FILTER_CONFIG = {
     },
 }
 
-PROPERTY_FAMILY_CANONICAL_IDS: dict[str, tuple[str, ...]] = {
-    "marine_antifouling": (
-        "PROP_antifouling_raft_singapore",
-        "PROP_antifouling_performance",
-        "PROP_anti_fouling_performance",
-        "PROP_antifouling_performance_raft",
-        "PROP_antifouling_raft_test",
-        "PROP_long_term_antifouling",
-        "PROP_biofouling_coverage",
-        "PROP_antifouling_static",
-        "PROP_antifouling_dynamic",
-        "PROP_biofouling_resistance",
-        "PROP_antifouling_raft_spain",
-        "PROP_antifouling_rating_florida_16weeks",
-        "PROP_antifouling_rating_florida_8weeks",
-        "PROP_antifouling_rating_sandefjord_rotor_18weeks",
-        "PROP_antifouling_animal_fouling_score_spain_23wk",
-        "PROP_antifouling_animal_fouling_score_singapore_16wk",
-        "PROP_antifouling_slime_rating_singapore_32weeks",
-        "PROP_antifouling_algae_rating_singapore_32weeks",
-        "PROP_antifouling_animals_rating_singapore_32weeks",
-        "PROP_efficacy_against_macro_fouling",
-        "PROP_marine_fouling_resistance",
-        "PROP_weed_fouling_coverage",
-        "PROP_antifouling_microfouling_coverage_6mo",
-        "PROP_antifouling_microfouling_coverage_12mo",
-        "PROP_animal_fouling_coverage",
-        "PROP_antifouling_coverage",
-        "PROP_biofouling_field_performance",
-    ),
-    "marine_fouling_release": (
-        "PROP_fouling_release_performance",
-        "PROP_fouling_rating",
-        "PROP_antifouling_total_fouling",
-        "PROP_antifouling_soft_fouling",
-        "PROP_antifouling_hard_fouling",
-        "PROP_fouling_release_performance_soft",
-        "PROP_fouling_release_performance_hard",
-        "PROP_fouling_coverage_changi_44wk",
-        "PROP_fouling_coverage_changi_35wk",
-        "PROP_fouling_release_at_1p5_mps_80d",
-        "PROP_fouling_release_at_2p6_mps_80d",
-        "PROP_fouling_release_at_1p5_mps_7d",
-        "PROP_fouling_release_at_2p6_mps_7d",
-        "PROP_fouling_release_performance_raft_singapore_40weeks",
-        "PROP_fouling_release_performance_raft_singapore_63weeks",
-        "PROP_fouling_release_performance_raft_sandefjord_65weeks",
-    ),
-    "marine_corrosion": (
-        "PROP_corrosion_resistance",
-        "PROP_corrosion_resistance_salt_spray",
-        "PROP_salt_spray_resistance",
-        "PROP_salt_spray_corrosion_resistance",
-        "PROP_nss_corrosion_width",
-        "PROP_cathodic_delamination",
-        "PROP_corrosion_protection",
-        "PROP_corrosion_creep",
-        "PROP_corrosion_rating",
-    ),
-    "marine_immersion_durability": (
-        "PROP_blistering_fw_immersion",
-        "PROP_cracking_sw_immersion",
-        "PROP_wet_adhesion_seawater",
-        "PROP_water_immersion_pass",
-        "PROP_immersion_adhesion",
-    ),
-    "marine_adhesion": (
-        "PROP_adhesion",
-        "PROP_ADHESION",
-        "PROP_cross_hatch_adhesion",
-        "PROP_adhesion_rating",
-        "PROP_wet_adhesion_seawater",
-        "PROP_immersion_adhesion",
-    ),
-    "marine_mechanical_durability": (
-        "PROP_abrasion_resistance",
-        "PROP_CHIPPING_RESISTANCE",
-    ),
-    "marine_weathering_uv": (
-        "PROP_gloss_60",
-        "PROP_GLOSS",
-        "PROP_total_solar_reflectance",
-    ),
-    "marine_repair_constructability": (
-        "PROP_tack_free_time",
-    ),
-    "marine_tank_chemical": (
-        "PROP_acid_resistance",
-    ),
-}
+PROPERTY_FAMILY_CANONICAL_IDS = property_family_canonical_ids()
 
 
 INVALID_EXAMPLE_KIND_FILTER_VALUES = {
@@ -1033,6 +1194,9 @@ def aggregate_filter_values(
     facts_map: dict[str, dict[str, Any]],
     evidence_map: dict[str, dict[str, Any]],
 ) -> list[Any]:
+    context = raw.get("_query_context")
+    if context is not None:
+        facts_map, evidence_map = context["facts"], context["evidence"]
     values = collect_record_filter_values(raw, filter_key)
     for record in embedded_records(raw, "facts", "fact_records"):
         values.extend(collect_record_filter_values(record, filter_key))
@@ -1183,6 +1347,15 @@ def object_id_candidates(raw: dict[str, Any]) -> set[str]:
 
 
 def iter_store_hyperedges(store: Any) -> list[dict[str, Any]]:
+    return get_query_classification_view(store)["rows"]
+
+
+def search_hyperedge_rows(store: Any, filters: dict[str, Any]) -> list[dict[str, Any]]:
+    view = filters.get("_query_bound_view")
+    return view["rows"] if view is not None else iter_store_hyperedges(store)
+
+
+def _legacy_store_hyperedges(store: Any) -> list[dict[str, Any]]:
     sources = [
         store_get(store, "hyperedges"),
         store_get(store, "hyperedges_by_object_id"),
@@ -1561,6 +1734,8 @@ def aggregate_material_rows(
     facts_map: dict[str, dict[str, Any]] | None,
     role_filter: set[str] | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
+    if "_query_context" in raw:
+        facts_map = raw["_query_context"]["facts"]
     rows = material_rows(raw, role_filter)
     rows.extend(fact_material_rows_for_raw(raw, facts_map, role_filter))
     return rows
@@ -1641,6 +1816,8 @@ def aggregate_target_values(
     filters: dict[str, Any],
     facts_map: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    if target in PROFILE_QUERY_AXES:
+        return [{"value": value, "canonical_id": value} for value in profile_query_values(raw, target)]
     role_filter = lower_set(filters.get("material_roles") or []) or None
     doc_id = raw_hyperedge_doc_id(raw)
     patent = patent_for_doc(patents, doc_id)
@@ -1762,6 +1939,8 @@ def raw_matches_aggregate_filters(
     facts_map: dict[str, dict[str, Any]] | None = None,
     evidence_map: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
+    if not profile_query_matches(raw, filters) or not property_family_matches(raw, filters):
+        return False
     facts_map = facts_map or {}
     evidence_map = evidence_map or {}
     doc_ids = set(filters.get("doc_ids") or [])
@@ -1771,11 +1950,6 @@ def raw_matches_aggregate_filters(
         wanted = lower_set(filters["properties"])
         values = aggregate_target_values(raw, "property", patents, filters)
         if not any((item.get("value") or "").casefold() in wanted or (item.get("canonical_id") or "").casefold() in wanted for item in values):
-            return False
-    soft_property_ids = lower_set(property_canonical_ids_for_filters(filters))
-    if soft_property_ids:
-        values = aggregate_target_values(raw, "property", patents, filters)
-        if not any((item.get("canonical_id") or "").casefold() in soft_property_ids for item in values):
             return False
     if filters.get("polarity") and str(raw.get("polarity") or "").casefold() not in lower_set(filters["polarity"]):
         return False
@@ -1860,20 +2034,13 @@ def raw_matches_aggregate_filters(
     return True
 
 
-def fetch_allowed_hyperedge_keys(filters: dict[str, Any], warnings: list[str]) -> set[tuple[str, str]] | None:
+def fetch_allowed_hyperedge_keys(filters: dict[str, Any], warnings: list[str]) -> set[str]:
     sql_filters = normalize_search_filters(filters)
-    if not any(sql_filters.get(key) for key in ("doc_ids", "properties", "polarity", "example_kind")):
-        return None
     try:
         pg_env = expand.load_pg_env(expand.DEFAULT_PG_ENV)
         clauses, params = search_filter_sql("o", sql_filters)
         sql = f"""
-            SELECT o.doc_id,
-                   COALESCE(
-                       NULLIF(o.metadata->>'raw_hyperedge_id', ''),
-                       NULLIF(o.metadata->>'hyperedge_id', ''),
-                       regexp_replace(o.object_id, '^.*::', '')
-                   ) AS raw_hyperedge_id
+            SELECT o.object_id, o.doc_id, o.metadata
             FROM retrieval_objects o
             WHERE {' AND '.join(clauses)}
             ORDER BY o.doc_id, o.object_id
@@ -1881,17 +2048,14 @@ def fetch_allowed_hyperedge_keys(filters: dict[str, Any], warnings: list[str]) -
         with expand.pg_connect(pg_env) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                return {
-                    (str(doc_id), str(hyperedge_id))
-                    for doc_id, hyperedge_id in cur.fetchall()
-                    if doc_id and hyperedge_id
-                }
+                return HyperedgeCohort(cur.fetchall())
     except Exception as exc:  # noqa: BLE001
-        warnings.append(f"retrieval_objects filter unavailable; used raw KG filtering only: {exc}")
-        return None
+        raise CohortUnavailable("retrieval_objects cohort unavailable") from exc
 
 
 def first_evidence_example(raw: dict[str, Any], evidence_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    if "_query_context" in raw:
+        evidence_map = raw["_query_context"]["evidence"]
     evidence_ids = raw.get("evidence_ids")
     if not isinstance(evidence_ids, list):
         evidence_ids = [raw.get("evidence_id")] if raw.get("evidence_id") else []
@@ -1901,6 +2065,7 @@ def first_evidence_example(raw: dict[str, Any], evidence_map: dict[str, dict[str
         "doc_id": raw_hyperedge_doc_id(raw),
         "object_id": raw_hyperedge_object_id(raw),
         "hyperedge_id": raw_hyperedge_id(raw),
+        "classification": raw.get("_query_classification"),
         "evidence_id": evidence_id,
         "page": evidence.get("page"),
         "section": evidence.get("section"),
@@ -2006,6 +2171,8 @@ def raw_evidence_rows(raw: dict[str, Any], evidence_map: dict[str, dict[str, Any
 
 
 def raw_fact_rows(raw: dict[str, Any], facts_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    if "_query_context" in raw:
+        facts_map = raw["_query_context"]["facts"]
     rows: list[dict[str, Any]] = []
     inline = raw.get("facts")
     if isinstance(inline, list):
@@ -2295,24 +2462,29 @@ def run_resin_system_aggregate(
     warnings: list[str],
     applied_filters: list[str] | None = None,
     ignored_filters: list[str] | None = None,
+    intent: str = "group_count",
 ) -> dict[str, Any]:
-    matched_doc_ids = sorted({raw_hyperedge_doc_id(raw) for raw in matched if raw_hyperedge_doc_id(raw)})
+    def doc_key(raw: dict[str, Any]) -> str:
+        doc_id = raw_hyperedge_doc_id(raw)
+        return doc_id_lookup_key(doc_id) or doc_id
+
+    matched_doc_ids = sorted({doc_key(raw) for raw in matched if doc_key(raw)})
     total_docs = len(matched_doc_ids)
     rows_by_doc: dict[str, list[dict[str, Any]]] = {doc_id: [] for doc_id in matched_doc_ids}
     matched_example_by_doc: dict[str, dict[str, Any]] = {}
     for raw in matched:
-        doc_id = raw_hyperedge_doc_id(raw)
+        doc_id = doc_key(raw)
         if doc_id and doc_id not in matched_example_by_doc:
             matched_example_by_doc[doc_id] = raw
     for raw in all_hyperedges:
-        doc_id = raw_hyperedge_doc_id(raw)
+        doc_id = doc_key(raw)
         if doc_id in rows_by_doc:
             rows_by_doc[doc_id].append(raw)
 
     buckets: dict[str, dict[str, Any]] = {}
     classified_docs = 0
     for doc_id in matched_doc_ids:
-        classification = choose_doc_resin_system(doc_id, rows_by_doc.get(doc_id, []), patents.get(doc_id, {}))
+        classification = choose_doc_resin_system(doc_id, rows_by_doc.get(doc_id, []), patent_for_doc(patents, doc_id))
         value = classification["value"]
         if value != "unknown":
             classified_docs += 1
@@ -2373,19 +2545,22 @@ def run_resin_system_aggregate(
     return {
         "tool": "kg.sql_aggregate",
         "status": "ok" if items else "empty",
-        "query_interpretation": {"intent": "group_count", "target": target, "group_by": group_by, "filters": filters},
-        "count_unit": "patent",
-        "cohort_mode": "document",
+        "query_interpretation": {"intent": intent, "target": target, "group_by": group_by, "filters": filters},
         "summary": {
             "matched_hyperedges": len(matched),
             "total_count": total_docs,
             "matched_doc_count": total_docs,
             "classified_doc_count": classified_docs,
             "unknown_doc_count": unknown_docs,
+            "distinct_count": sum(value != "unknown" for value in buckets),
+            "distinct_count_unit": "resin_system",
+            "group_count": len(buckets) if intent == "group_count" else None,
             "returned": len(items),
             "applied_filters": applied_filters or [],
             "ignored_filters": ignored_filters or [],
         },
+        "count_unit": "patent",
+        "cohort_mode": "document",
         "items": items,
         "warnings": warnings,
         "generated_at": now_iso(),
@@ -2398,6 +2573,11 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
     group_by = normalize_filter_values(request.get("group_by"))
     raw_filters = request.get("requested_filters") if isinstance(request.get("requested_filters"), dict) else request.get("filters")
     receipt = normalize_filter_request("kg.sql_aggregate", raw_filters)
+    validate_property_receipt(receipt)
+    requested_group_by = list(group_by)
+    effective_group_by: list[str] = []
+    composite_mode = False
+    coverage: dict[str, Any] = {}
     receipt["route_adjustments"] = list(
         dict.fromkeys([*(request.get("route_adjustments") or []), *receipt["route_adjustments"]])
     )
@@ -2412,9 +2592,13 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
         payload["effective_filters"] = receipt["effective_filters"]
         payload["unsupported_constraints"] = receipt["unsupported_constraints"]
         payload["route_adjustments"] = receipt["route_adjustments"]
+        payload["constraint_candidates"] = receipt.get("constraint_candidates", [])
+        payload["classification_registry_version"] = receipt.get("classification_registry_version")
+        payload["classification_scope"] = "doc_profile"
+        attach_classification_coverage(payload, coverage)
         payload["requested_group_by"] = requested_group_by
         payload["effective_group_by"] = effective_group_by if composite_mode else ([] if not group_by else [resolved_target] if resolved_target in AGGREGATE_GROUP_BY else [])
-        doc_like = resolved_target in {"doc_id", "publication_year", "resin_system", "assignee", "application_family", "coating_families", "__composite__"} or composite_mode
+        doc_like = resolved_target in {"doc_id", "publication_year", "resin_system", "assignee", "application_family", "coating_families", "__composite__"} or resolved_target in PROFILE_QUERY_AXES or composite_mode
         payload["cohort_mode"] = "document" if doc_like else "hyperedge"
         payload["count_unit"] = (
             "patent" if doc_like
@@ -2515,8 +2699,14 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
     evidence_map = get_evidence_map(store)
     facts_map = get_facts_map(store)
     patents = get_patent_map(store)
-    allowed_keys = fetch_allowed_hyperedge_keys(filters, warnings)
-    all_hyperedges = iter_store_hyperedges(store)
+    try:
+        allowed_keys = fetch_allowed_hyperedge_keys(filters, warnings)
+        if not isinstance(allowed_keys, set):
+            raise CohortUnavailable("invalid cohort response")
+    except CohortUnavailable:
+        return finish(cohort_error("kg.sql_aggregate"), aggregate_target=aggregate_target)
+    bound_view = bind_query_classification_view(store, allowed_keys)
+    all_hyperedges = bound_view["rows"]
     requested_material_ids = lower_set(filters.get("material_canonical_ids") or [])
     if requested_material_ids:
         known_material_ids = {
@@ -2542,11 +2732,17 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             )
     match_filters = dict(filters)
     matched: list[dict[str, Any]] = []
+    coverage_rows: list[dict[str, Any]] = []
+    without_axes = {key: value for key, value in match_filters.items() if key not in PROFILE_QUERY_AXES}
     for raw in all_hyperedges:
-        if allowed_keys is not None and hyperedge_natural_key(raw) not in allowed_keys:
+        if raw_hyperedge_object_id(raw) not in allowed_keys:
             continue
+        if raw_matches_aggregate_filters(raw, patents, without_axes, facts_map, evidence_map):
+            coverage_rows.append(raw)
         if raw_matches_aggregate_filters(raw, patents, match_filters, facts_map, evidence_map):
             matched.append(raw)
+    coverage = classification_coverage(coverage_rows, bound_view, allowed_keys,
+        axes_in_use=[axis for axis in PROFILE_QUERY_AXES if filters.get(axis) or axis in group_by or axis == target])
 
     target_identities: set[tuple[Any, ...]] = set()
     missing_target_identity = 0
@@ -2572,7 +2768,7 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
     if aggregate_target == "resin_system":
         return finish(run_resin_system_aggregate(
             matched=matched,
-            all_hyperedges=all_hyperedges,
+            all_hyperedges=matched,
             patents=patents,
             evidence_map=evidence_map,
             target=target,
@@ -2583,6 +2779,7 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             warnings=warnings,
             applied_filters=applied_filters,
             ignored_filters=ignored_filters,
+            intent=intent,
         ), aggregate_target=aggregate_target)
 
     if intent == "numeric_distribution":
@@ -2654,7 +2851,9 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
             # Build per-dimension value lists (multi-value dims expand membership).
             dim_value_lists: list[list[str]] = []
             for dim in dim_names:
-                if dim == "publication_year":
+                if dim in PROFILE_QUERY_AXES:
+                    dim_value_lists.append(profile_query_values(raw, dim) or [f"unknown_{dim}"])
+                elif dim == "publication_year":
                     dim_value_lists.append([publication_year_for_patent(patent)])
                 elif dim == "assignee":
                     items = aggregate_target_values(raw, "assignee", patents, filters, facts_map)
@@ -2764,7 +2963,7 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
                 },
             )
             doc_id = raw_hyperedge_doc_id(raw)
-            if aggregate_target in {"doc_id", "publication_year", "assignee", "application_family", "coating_families", "coating_family"}:
+            if aggregate_target in {"doc_id", "publication_year", "assignee", "application_family", "coating_families", "coating_family"} or aggregate_target in PROFILE_QUERY_AXES:
                 count_identity = ("doc", doc_id_lookup_key(doc_id) or normalize_match_text(doc_id), str(value).casefold())
             elif aggregate_target == "formulation":
                 count_identity = identity
@@ -2804,7 +3003,7 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
         for raw in matched
         if raw_hyperedge_doc_id(raw)
     }
-    bucket_membership_count = sum(int(item.get("doc_count") or 0) for item in items)
+    bucket_membership_count = sum(int(item.get("doc_count") or 0) for item in buckets.values())
     payload = {
         "tool": "kg.sql_aggregate",
         "status": "ok" if items else "empty",
@@ -2826,6 +3025,8 @@ def run_sql_aggregate(request: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "generated_at": now_iso(),
     }
+    if aggregate_target in PROFILE_QUERY_AXES:
+        payload["summary"]["distinct_count_unit"] = aggregate_target
     return finish(payload, aggregate_target=aggregate_target)
 
 
@@ -2868,6 +3069,9 @@ def embed_query(query: str) -> tuple[list[float], dict[str, float]]:
 def search_filter_sql(alias: str, filters: dict[str, Any]) -> tuple[list[str], list[Any]]:
     clauses = [f"{alias}.object_type = 'hyperedge'"]
     params: list[Any] = []
+    if "_allowed_object_ids" in filters:
+        clauses.append(f"{alias}.object_id = ANY(%s)")
+        params.append(sorted(filters["_allowed_object_ids"]))
     if filters["doc_ids"]:
         clauses.append(f"{alias}.doc_id = ANY(%s)")
         params.append(filters["doc_ids"])
@@ -2905,7 +3109,14 @@ def optional_score(value: Any) -> float | None:
 def search_dense(conn: Any, query_vec: list[float], filters: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     vector = vector_literal(query_vec)
     clauses, params = search_filter_sql("o", filters)
+    scoped = "_allowed_object_ids" in filters
+    # Materialize eligibility before distance ranking so HNSW cannot postfilter a global top-k.
+    prefix = (f"WITH scoped_objects AS MATERIALIZED (SELECT o.* FROM retrieval_objects o "
+              f"WHERE {' AND '.join(clauses)})") if scoped else ""
+    relation = "scoped_objects" if scoped else "retrieval_objects"
+    where = "" if scoped else f"WHERE {' AND '.join(clauses)}"
     sql = f"""
+        {prefix}
         SELECT
             o.object_type,
             o.object_id,
@@ -2913,8 +3124,8 @@ def search_dense(conn: Any, query_vec: list[float], filters: dict[str, Any], lim
             o.text_for_embedding,
             o.metadata,
             1 - (o.dense_embedding <=> %s::vector) AS dense_score
-        FROM retrieval_objects o
-        WHERE {' AND '.join(clauses)}
+        FROM {relation} o
+        {where}
         ORDER BY o.dense_embedding <=> %s::vector, o.object_id
         LIMIT %s
     """
@@ -2923,7 +3134,7 @@ def search_dense(conn: Any, query_vec: list[float], filters: dict[str, Any], lim
             cur.execute("SET LOCAL hnsw.ef_search = 100")
         except Exception:
             conn.rollback()
-        cur.execute(sql, [vector, *params, vector, limit])
+        cur.execute(sql, [*params, vector, vector, limit] if scoped else [vector, *params, vector, limit])
         return row_dicts(cur, cur.fetchall())
 
 
@@ -3147,104 +3358,32 @@ def raw_matches_search_hard_filters(
     filters: dict[str, Any],
     facts_map: dict[str, dict[str, Any]] | None = None,
     patents: dict[str, dict[str, Any]] | None = None,
+    evidence_map: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
-    doc_ids = set(filters.get("doc_ids") or [])
-    if doc_ids and raw_hyperedge_doc_id(raw) not in doc_ids:
+    if "_allowed_object_ids" in filters and raw_hyperedge_object_id(raw) not in filters["_allowed_object_ids"]:
         return False
-    for filter_key, raw_key in (
-        ("properties", "property"),
-        ("polarity", "polarity"),
-        ("example_kind", "example_kind"),
-    ):
-        wanted = lower_set(filters.get(filter_key) or [])
-        if wanted and not item_matches_filter(
-            {"value": raw.get(raw_key), "canonical_id": raw.get(f"{raw_key}_canonical_id")},
-            wanted,
-        ):
-            return False
-    role_filter = lower_set(filters.get("material_roles") or [])
-    if role_filter and not aggregate_material_rows(raw, facts_map, role_filter):
-        return False
-    material_rows_for_filter = aggregate_material_rows(raw, facts_map, role_filter or None)
-    wanted_materials = lower_set(filters.get("materials") or [])
-    if wanted_materials:
-        material_items = [
-            normalize_value_item(
-                row.get("material") or row.get("name") or row.get("label"),
-                row.get("canonical_id"),
-            )
-            for _, row in material_rows_for_filter
-        ]
-        if not any(item and item_matches_filter(item, wanted_materials) for item in material_items):
-            return False
-    wanted_material_ids = lower_set(filters.get("material_canonical_ids") or [])
-    if wanted_material_ids:
-        actual_ids = {
-            str(row.get("canonical_id") or "").strip().casefold()
-            for _, row in material_rows_for_filter
-            if str(row.get("canonical_id") or "").strip()
-        }
-        if not wanted_material_ids.intersection(actual_ids):
-            return False
-    wanted_resin_systems = lower_set(filters.get("resin_systems") or [])
-    if wanted_resin_systems:
-        patent = patent_for_doc(patents or {}, raw_hyperedge_doc_id(raw))
-        systems = resin_system_candidates(raw, patent)
-        if not any(item_matches_filter({"value": item.get("value")}, wanted_resin_systems) for item in systems):
-            return False
-    if filters.get("material_groups"):
-        if not material_groups_match(filters.get("material_groups") or [], raw, facts_map):
-            return False
-    if not doc_hard_scope_matches(raw, filters, patents or {}):
-        return False
-    return True
+    return raw_matches_aggregate_filters(raw, patents or {}, filters, facts_map, evidence_map)
 
 
 def filter_search_items_by_hard_material_roles(
     items: list[dict[str, Any]],
     store: Any,
     filters: dict[str, Any],
+    *,
+    allowed_object_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    if not any(
-        filters.get(key)
-        for key in (
-            "material_roles",
-            "materials",
-            "material_groups",
-            "material_canonical_ids",
-            "resin_systems",
-            "application_family",
-            "coating_families",
-            "publication_year",
-            "doc_ids",
-        )
-    ):
-        return items
+    view = filters.get("_query_bound_view") or get_query_classification_view(store)
     facts_map = get_facts_map(store)
     patents = get_patent_map(store)
-    raw_by_natural_key: dict[tuple[str, str], dict[str, Any]] = {}
-    raw_by_object_id: dict[str, dict[str, Any]] = {}
-    for raw in iter_store_hyperedges(store):
-        doc_id = raw_hyperedge_doc_id(raw)
-        hyperedge_id = raw_hyperedge_id(raw)
-        if doc_id and hyperedge_id:
-            raw_by_natural_key[(doc_id, hyperedge_id)] = raw
-        for object_id in object_id_candidates(raw):
-            raw_by_object_id[object_id] = raw
+    evidence_map = get_evidence_map(store)
     filtered: list[dict[str, Any]] = []
     for item in items:
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         object_id = str(item.get("object_id") or "")
-        doc_id = str(item.get("doc_id") or "")
-        hyperedge_id = str(
-            metadata.get("raw_hyperedge_id")
-            or metadata.get("hyperedge_id")
-            or item.get("hyperedge_id")
-            or ""
-        )
-        raw = raw_by_object_id.get(object_id) or raw_by_natural_key.get((doc_id, hyperedge_id))
-        if raw and raw_matches_search_hard_filters(raw, filters, facts_map, patents):
-            filtered.append(item)
+        if allowed_object_ids is not None and object_id not in allowed_object_ids:
+            continue
+        raw = view["by_object_id"].get(object_id)
+        if raw and raw_matches_search_hard_filters(raw, filters, facts_map, patents, evidence_map):
+            filtered.append({**item, "classification": raw["_query_classification"]})
     return filtered
 
 
@@ -3672,7 +3811,7 @@ def test_fact_recall_rows(
     facts_map = get_facts_map(store)
     evidence_map = get_evidence_map(store)
     rows: list[dict[str, Any]] = []
-    for raw in iter_store_hyperedges(store):
+    for raw in search_hyperedge_rows(store, filters):
         if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
         facts = raw_fact_rows(raw, facts_map)
@@ -4099,7 +4238,7 @@ def numeric_fact_recall_rows(
     facts_map = get_facts_map(store)
     evidence_map = get_evidence_map(store)
     rows: list[dict[str, Any]] = []
-    for raw in iter_store_hyperedges(store):
+    for raw in search_hyperedge_rows(store, filters):
         if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
         facts = raw_fact_rows(raw, facts_map)
@@ -4163,44 +4302,44 @@ def material_fact_recall_rows(
     if not query_terms:
         return []
     facts_map = get_facts_map(store)
-    all_hyperedges = iter_store_hyperedges(store)
-    by_fact_id: dict[str, list[dict[str, Any]]] = {}
-    by_context: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    by_object_key: dict[str, dict[str, Any]] = {}
+    all_hyperedges = search_hyperedge_rows(store, filters)
+    by_fact_id: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    by_context: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    by_object_key: dict[tuple[str, str], dict[str, Any]] = {}
+    fact_pool: dict[tuple[str, str, str], dict[str, Any]] = {}
     for raw in all_hyperedges:
         if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
+        source = str((raw.get("_query_classification") or {}).get("source_id") or "")
         for candidate in object_id_candidates(raw):
-            by_object_key[candidate] = raw
+            by_object_key[(source, candidate)] = raw
         doc_id = raw_hyperedge_doc_id(raw)
         context_id = str(raw.get("context_id") or "").strip()
         if doc_id and context_id:
-            by_context.setdefault((doc_id, context_id), []).append(raw)
+            by_context.setdefault((source, doc_id, context_id), []).append(raw)
+        source_facts = raw.get("_query_context", {}).get("facts", facts_map)
+        for fallback, fact in source_facts.items():
+            fact_pool[(source, str(fact.get("doc_id") or doc_id), fact_identity(fact, fallback))] = fact
         for fact in raw_fact_rows(raw, facts_map):
             key = fact_identity(fact)
             if key:
-                by_fact_id.setdefault(key, []).append(raw)
+                by_fact_id.setdefault((source, key), []).append(raw)
 
     matched_by_object: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
-    seen_facts: set[str] = set()
-    for fallback, fact in facts_map.items():
+    for (source, fact_doc_id, fact_key), fact in fact_pool.items():
         if not isinstance(fact, dict):
             continue
-        fact_key = fact_identity(fact, fallback)
-        if fact_key in seen_facts:
-            continue
-        seen_facts.add(fact_key)
         if not material_fact_matches_query(fact, query_terms):
             continue
-        doc_id = str(fact.get("doc_id") or "").strip()
+        doc_id = str(fact.get("doc_id") or fact_doc_id).strip()
         candidate_raws: list[dict[str, Any]] = []
         for key in fact_hyperedge_keys(fact):
-            if key in by_object_key:
-                candidate_raws.append(by_object_key[key])
-        candidate_raws.extend(by_fact_id.get(fact_key, []))
+            if (source, key) in by_object_key:
+                candidate_raws.append(by_object_key[(source, key)])
+        candidate_raws.extend(by_fact_id.get((source, fact_key), []))
         context_id = str(fact.get("context_id") or "").strip()
         if doc_id and context_id:
-            candidate_raws.extend(by_context.get((doc_id, context_id), []))
+            candidate_raws.extend(by_context.get((source, doc_id, context_id), []))
         for raw in candidate_raws:
             if not raw_matches_search_hard_filters(raw, filters, facts_map):
                 continue
@@ -4250,7 +4389,7 @@ def substrate_fact_recall_rows(
     facts_map = get_facts_map(store)
     evidence_map = get_evidence_map(store)
     rows: list[dict[str, Any]] = []
-    for raw in iter_store_hyperedges(store):
+    for raw in search_hyperedge_rows(store, filters):
         if not raw_matches_search_hard_filters(raw, filters, facts_map):
             continue
         values = aggregate_filter_values(raw, "substrates", facts_map, evidence_map)
@@ -4828,6 +4967,7 @@ def compact_search_item(item: dict[str, Any], rank: int) -> dict[str, Any]:
         },
         "channels": item.get("channels") or [],
         "text_preview": compact_text(item.get("text_for_embedding"), 1200),
+        "classification": item.get("classification"),
         "metadata": compact_search_metadata(metadata),
     }
 
@@ -4865,6 +5005,7 @@ def _constraint_labels(filters: dict[str, Any]) -> list[str]:
         "publication_year",
         "assignees",
         "applications",
+        *PROFILE_QUERY_AXES,
     ):
         value = filters.get(key)
         if not value:
@@ -4919,7 +5060,9 @@ def build_adjacent_search_items(
     def _store_candidates(trial_filters: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         seen_docs: set[str] = set()
-        for raw in iter_store_hyperedges(store):
+        for raw in search_hyperedge_rows(store, trial_filters):
+            if raw_hyperedge_object_id(raw) not in trial_allowed:
+                continue
             if not raw_matches_search_hard_filters(raw, trial_filters, facts_map, patents):
                 continue
             doc_id = raw_hyperedge_doc_id(raw)
@@ -4955,6 +5098,17 @@ def build_adjacent_search_items(
         scoped_trial, scope_warnings = apply_hard_search_scopes(store, trial)
         for warning in scope_warnings:
             adjustments.append(f"adjacent_scope:{warning}")
+        trial_allowed = fetch_allowed_hyperedge_keys(scoped_trial, adjustments)
+        if not isinstance(trial_allowed, set):
+            raise CohortUnavailable("invalid adjacent cohort response")
+        scoped_trial = {**scoped_trial, "_query_bound_view": bind_query_classification_view(store, trial_allowed)}
+        if any(scoped_trial.get(axis) for axis in PROFILE_QUERY_AXES):
+            trial_allowed = {raw_hyperedge_object_id(raw) for raw in search_hyperedge_rows(store, scoped_trial)
+                             if raw_hyperedge_object_id(raw) in trial_allowed
+                             and raw_matches_search_hard_filters(raw, scoped_trial, facts_map, patents)}
+            scoped_trial = {**scoped_trial, "_allowed_object_ids": trial_allowed}
+            if not trial_allowed:
+                continue
         fused: list[dict[str, Any]] = []
         try:
             dense_vec, sparse_weights = embed_query(query)
@@ -4966,7 +5120,7 @@ def build_adjacent_search_items(
             fused = fuse_search_results(dense_rows, sparse_rows, top_k=candidate_k)
             fused = merge_property_recall_candidates(fused, property_rows)
             fused = rerank_search_results_by_soft_filters(fused, scoped_trial, top_k=candidate_k)
-            fused = filter_search_items_by_hard_material_roles(fused, store, scoped_trial)
+            fused = filter_search_items_by_hard_material_roles(fused, store, scoped_trial, allowed_object_ids=trial_allowed)
         except Exception:
             traceback.print_exc()
             fused = []
@@ -4981,6 +5135,7 @@ def build_adjacent_search_items(
             if lookup and lookup not in seen:
                 fused.append(row)
                 seen.add(lookup)
+        fused = filter_search_items_by_hard_material_roles(fused, store, scoped_trial, allowed_object_ids=trial_allowed)
         if not fused:
             continue
         # Diversify by doc so adjacent envelope is patent-level, not one doc flooding top_k.
@@ -5016,6 +5171,9 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
     query = str(request.get("query") or "").strip()
     raw_filters = request.get("requested_filters") if isinstance(request.get("requested_filters"), dict) else request.get("filters")
     receipt = normalize_filter_request("kg.hybrid_search", raw_filters)
+    validate_property_receipt(receipt)
+    coverage: dict[str, Any] = {}
+    pre_recall_scope: dict[str, Any] = {}
     receipt["unsupported_constraints"] = sorted(
         set([*receipt["unsupported_constraints"], *(request.get("unsupported_constraints") or [])])
     )
@@ -5028,6 +5186,12 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         payload["effective_filters"] = receipt["effective_filters"]
         payload["unsupported_constraints"] = receipt["unsupported_constraints"]
         payload["route_adjustments"] = receipt["route_adjustments"]
+        payload["constraint_candidates"] = receipt.get("constraint_candidates", [])
+        payload["classification_registry_version"] = receipt.get("classification_registry_version")
+        payload["classification_scope"] = "doc_profile"
+        if pre_recall_scope:
+            payload["classification_pre_recall_scope"] = pre_recall_scope
+        attach_classification_coverage(payload, coverage)
         payload["cohort_mode"] = "hyperedge"
         payload["count_unit"] = "hyperedge"
         payload.setdefault("exact_items", payload.get("items") or [])
@@ -5115,16 +5279,41 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
             "generated_at": now_iso(),
         })
 
+    try:
+        allowed_keys = fetch_allowed_hyperedge_keys(filters, warnings)
+        if not isinstance(allowed_keys, set):
+            raise CohortUnavailable("invalid cohort response")
+    except CohortUnavailable:
+        return finish(cohort_error("kg.hybrid_search"))
+    view = bind_query_classification_view(store, allowed_keys)
+    without_axes = {key: value for key, value in filters.items() if key not in PROFILE_QUERY_AXES}
+    facts_map, patents, evidence_map = get_facts_map(store), get_patent_map(store), get_evidence_map(store)
+    coverage_rows = [raw for raw in view["rows"] if raw_hyperedge_object_id(raw) in allowed_keys
+                     and raw_matches_search_hard_filters(raw, without_axes, facts_map, patents, evidence_map)]
+    coverage = classification_coverage(coverage_rows, view, allowed_keys,
+        axes_in_use=[axis for axis in PROFILE_QUERY_AXES if filters.get(axis)])
+    recall_filters = {**filters, "_query_bound_view": view}
+    active_axes = [axis for axis in PROFILE_QUERY_AXES if filters.get(axis)]
+    if active_axes:
+        db_object_count = len(allowed_keys)
+        allowed_keys = {raw_hyperedge_object_id(raw) for raw in coverage_rows if profile_query_matches(raw, filters)}
+        # Keep resolved object IDs internal; public requested/effective filters retain the normalized axes.
+        recall_filters = {**recall_filters, "_allowed_object_ids": allowed_keys}
+        pre_recall_scope = {"axes": active_axes, "db_object_count": db_object_count,
+                            "eligible_object_count": len(allowed_keys), "identity": "source_bound_db_object_id"}
+    if not allowed_keys:
+        return finish({"tool": "kg.hybrid_search", "status": "empty", "query": query, "items": [],
+                       "summary": {"returned": 0}, "warnings": warnings})
     dense_vec, sparse_weights = embed_query(query)
     pg_env = expand.load_pg_env(expand.DEFAULT_PG_ENV)
     with expand.pg_connect(pg_env) as conn:
-        dense_rows = search_dense(conn, dense_vec, filters, candidate_k)
-        sparse_rows = search_sparse(conn, sparse_weights, filters, candidate_k)
-        property_rows = search_soft_property_candidates(conn, filters, candidate_k)
-    numeric_rows = numeric_fact_recall_rows(store, query, filters, limit=candidate_k)
-    test_rows = test_fact_recall_rows(store, query, filters, limit=candidate_k)
-    material_rows = material_fact_recall_rows(store, query, filters, limit=candidate_k)
-    substrate_rows = substrate_fact_recall_rows(store, query, filters, limit=candidate_k)
+        dense_rows = search_dense(conn, dense_vec, recall_filters, candidate_k)
+        sparse_rows = search_sparse(conn, sparse_weights, recall_filters, candidate_k)
+        property_rows = search_soft_property_candidates(conn, recall_filters, candidate_k)
+    numeric_rows = numeric_fact_recall_rows(store, query, recall_filters, limit=candidate_k)
+    test_rows = test_fact_recall_rows(store, query, recall_filters, limit=candidate_k)
+    material_rows = material_fact_recall_rows(store, query, recall_filters, limit=candidate_k)
+    substrate_rows = substrate_fact_recall_rows(store, query, recall_filters, limit=candidate_k)
     fused = fuse_search_results(dense_rows, sparse_rows, top_k=candidate_k)
     fused = merge_property_recall_candidates(fused, property_rows)
     fused = merge_numeric_fact_recall_candidates(fused, numeric_rows)
@@ -5142,7 +5331,7 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         fused = diversify_substrate_fact_search_items(fused)[:candidate_k]
     elif material_rows:
         fused = diversify_material_fact_search_items(fused)[:candidate_k]
-    fused = filter_search_items_by_hard_material_roles(fused, store, filters)
+    fused = filter_search_items_by_hard_material_roles(fused, store, recall_filters, allowed_object_ids=allowed_keys)
     page_rows, pagination = paginate_search_items(fused, offset=offset, top_k=top_k)
     items = [compact_search_item(item, rank) for rank, item in enumerate(page_rows, start=offset + 1)]
     adjacent_items: list[dict[str, Any]] = []
@@ -5186,6 +5375,88 @@ def run_hybrid_search(request: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "generated_at": now_iso(),
     })
+
+
+def run_lookup_vocabulary(request: dict[str, Any]) -> dict[str, Any]:
+    query = str(request.get("query") or "").strip()
+    dimension = request.get("dimension")
+    limit = clamp_int(request.get("limit"), 20, 1, 100)
+    supported = {*PROFILE_QUERY_AXES, "materials", "property_families"}
+    invalid = sorted(set(request) - {"query", "dimension", "limit"})
+    if dimension is not None and (not isinstance(dimension, str) or dimension not in supported):
+        invalid.append(f"dimension:{dimension}")
+    if invalid:
+        return {"tool": "kg.lookup_vocabulary", "status": "unsupported", "items": [],
+                "unsupported_constraints": invalid}
+    items: list[dict[str, Any]] = []
+    total = 0
+    match_counts = {"exact": 0, "related": 0, "browse": 0}
+    catalogue_match = "exact" if query else "browse"
+    material_values = expand_material_values([query]) if query and dimension in {None, "materials"} else []
+    if dimension is None or dimension in PROFILE_QUERY_AXES:
+        result = classification.lookup(query, dimension=dimension, limit=limit)
+        items.extend({**item, "match_type": catalogue_match, "match_basis": "classification_registry"} for item in result["items"])
+        total += result.get("total", len(result["items"]))
+        match_counts[catalogue_match] += result.get("total", len(result["items"]))
+    if dimension is None or dimension == "property_families":
+        families = [{"dimension": "property_families", "value": family, "canonical_ids": list(ids)}
+                    for family, ids in PROPERTY_FAMILY_CANONICAL_IDS.items()
+                    if not query or query.casefold() == family.casefold()]
+        total += len(families)
+        match_counts[catalogue_match] += len(families)
+        items.extend({**item, "match_type": catalogue_match, "match_basis": "property_family_registry"} for item in families)
+    if dimension is None or dimension == "materials":
+        store = get_store()
+        vocabulary: dict[tuple[str | None, str, str], dict[str, Any]] = {}
+        facts_map = get_facts_map(store)
+        wanted = {value.casefold() for value in material_values}
+        for raw in iter_store_hyperedges(store):
+            for role, material in aggregate_material_rows(raw, facts_map):
+                label = as_label(material.get("material") or material.get("name") or material.get("label")) or ""
+                canonical = str(material.get("canonical_id") or "").strip()
+                if not (label or canonical) or (query and not item_matches_filter({"value": label, "canonical_id": canonical}, wanted)):
+                    continue
+                if not query:
+                    match_type, match_basis = "browse", "catalogue"
+                elif query.casefold() in {label.casefold(), canonical.casefold()}:
+                    match_type = "exact"
+                    match_basis = "canonical_id" if query.casefold() == canonical.casefold() else "label"
+                elif wanted.intersection({label.casefold(), canonical.casefold()}):
+                    match_type, match_basis = "exact", "registered_alias"
+                else:
+                    match_type, match_basis = "related", "lexical_contains_not_equivalence"
+                source_id = raw["_query_classification"].get("source_id")
+                key = (source_id, canonical, label)
+                entry = vocabulary.setdefault(key, {"dimension": "materials", "value": label,
+                    "canonical_id": canonical or None, "source_id": source_id, "roles": [], "examples": [],
+                    "match_type": match_type, "match_basis": match_basis,
+                    "vocabulary_scope": "loaded_kg_not_db_cohort"})
+                if role not in entry["roles"]:
+                    entry["roles"].append(role)
+                example = {"doc_id": raw_hyperedge_doc_id(raw),
+                           "source_id": raw["_query_classification"].get("source_id"),
+                           "object_id": raw_hyperedge_object_id(raw)}
+                if example not in entry["examples"] and len(entry["examples"]) < 3:
+                    entry["examples"].append(example)
+        total += len(vocabulary)
+        for entry in vocabulary.values():
+            match_counts[entry["match_type"]] += 1
+        items.extend(vocabulary.values())
+    match_order = {"exact": 0, "related": 1, "browse": 2}
+    items.sort(key=lambda row: (match_order[row["match_type"]], row["dimension"], row["value"].casefold(),
+                               row.get("canonical_id") or "", row.get("source_id") or ""))
+    returned = items[:limit]
+    return {"tool": "kg.lookup_vocabulary", "status": "ok" if items else "empty", "dimension": dimension,
+            "query": query, "items": returned, "total": total, "truncated": total > limit,
+            "exact_items": [item for item in returned if item["match_type"] == "exact"],
+            "related_items": [item for item in returned if item["match_type"] == "related"],
+            "match_counts": match_counts,
+            "match_truncated": {kind: count > sum(item["match_type"] == kind for item in returned)
+                                for kind, count in match_counts.items()},
+            "suggested_filters": {"materials": material_values} if material_values and any(item["dimension"] == "materials" for item in items) else {},
+            "canonical_id_expansion_complete": False,
+            "selection_semantics": "candidate_ids_are_not_exhaustive_query_expansion",
+            "classification_registry_version": classification.load_registry()["version"]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -5244,6 +5515,7 @@ class Handler(BaseHTTPRequestHandler):
             "/tools/kg.hybrid_search",
             "/tools/kg.sql_aggregate",
             "/tools/kg.doc_field_scan",
+            "/tools/kg.lookup_vocabulary",
         }:
             self.send_json({"status": "not_found", "path": self.path}, 404)
             return
@@ -5260,6 +5532,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = run_hybrid_search(request)
             elif self.path == "/tools/kg.sql_aggregate":
                 payload = run_sql_aggregate(request)
+            elif self.path == "/tools/kg.lookup_vocabulary":
+                payload = run_lookup_vocabulary(request)
             else:
                 payload = run_doc_field_scan(request)
             status_code = 400 if payload.get("status") == "error" else 200
@@ -5270,6 +5544,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/tools/kg.hybrid_search": "kg.hybrid_search",
                 "/tools/kg.sql_aggregate": "kg.sql_aggregate",
                 "/tools/kg.doc_field_scan": "kg.doc_field_scan",
+                "/tools/kg.lookup_vocabulary": "kg.lookup_vocabulary",
             }
             tool = tool_map.get(self.path, "kg.expand_hyperedge_multihop")
             self.send_json(
@@ -5287,7 +5562,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"kg tools service at http://{HOST}:{PORT}", flush=True)
-    print("tools=kg.expand_hyperedge_multihop,kg.hybrid_search,kg.sql_aggregate,kg.doc_field_scan", flush=True)
+    print("tools=kg.expand_hyperedge_multihop,kg.hybrid_search,kg.sql_aggregate,kg.doc_field_scan,kg.lookup_vocabulary", flush=True)
     print(f"auth={'on' if AUTH_TOKEN else 'off'}", flush=True)
     server.serve_forever()
 

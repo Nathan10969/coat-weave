@@ -1,11 +1,18 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "retrieval_policy": {
     "candidate_k": 100,
     "top_k": 50,
     "expand_top_k": 30
   },
   "tools": {
+    "kg.lookup_vocabulary": {
+      "parameters": {
+        "query": {"type": "string", "required": true},
+        "dimension": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
     "kg.hybrid_search": {
       "parameters": {
         "query": {

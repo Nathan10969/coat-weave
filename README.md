@@ -1,31 +1,11 @@
-# CoatWeave
+# Coating Mini Source Snapshot
 
-## Historical source snapshot 10
+This branch is a source-only snapshot of the current Coating project.
 
-This repository is a public, source-only archive of the tenth frozen CoatWeave
-snapshot. It is not a claim that this snapshot is a complete deployed agent or
-a scientific/production acceptance result.
+- `extracting/`: local coating KG extraction, direct vision reconstruction, validation, projection, ingestion helpers, and tests.
+- `service/`: the service-side retrieval and query-classification source included in this historical snapshot.
+- `embedding/`: the A100 hyperedge embedding and collection-scoped incremental ingestion job.
 
-- Source branch: `fix/20260907-retrieval-full-evidence`
-- Source tip: `83b790ed3d6204ea37a5aef5b8bb2be66a04bb07`
-- Snapshot time: `2026-09-08 01:09:01 -07:00`
-- Publication: `snapshot-10` on `main` (manual early-cadence override)
+The snapshot deliberately excludes source PDFs, ZIP packages, extracted corpora, JSONL data drops, database contents, vector indexes, runtime state, logs, caches, virtual environments, backups, and all secret-bearing `.env` files.
 
-The tree contains extraction (`extracting/`), service (`service/`), embedding
-(`embedding/`), retrieval/evidence implementation, prompts, schemas, seed SQL,
-tests, and operational documentation. The public archive excludes source PDFs,
-corpora, database dumps, vector indexes, runtime logs, private incident
-material, production backups, and credentials. Example credential fields are
-empty and must be configured locally.
-
-## Scope and validation
-
-The code and tests are preserved as historical material. Offline syntax, unit
-tests, and CLI checks are release-time checks only; they do not establish model
-quality, live database compatibility, production deployment, or end-to-end
-scientific validity. No paid model/API, GPU, or production service was used for
-this publication.
-
-## License
-
-MIT © 2026 Nathan10969.
+Provider endpoints, credentials, and deployment paths are intentionally not part of this public snapshot. Only placeholder configuration is included.

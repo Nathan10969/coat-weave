@@ -6,6 +6,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import query_classification
+
 
 DEFAULT_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "config" / "kg_tool_contract.json"
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
@@ -17,11 +19,27 @@ def load_tool_contract() -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or not isinstance(value.get("tools"), dict):
         raise ValueError(f"invalid KG tool contract: {path}")
+    # The registry owns axis names and values; the tool contract owns transport.
+    for axis, definition in query_classification.axis_definitions().items():
+        for tool in ("kg.hybrid_search", "kg.sql_aggregate"):
+            fields = value["tools"][tool]["filter_fields"]
+            if axis not in fields:
+                fields.append(axis)
+        value.setdefault("field_types", {})[axis] = "classification_list"
+        value.setdefault("filter_aliases", {})[axis] = [axis]
+        value.setdefault("filter_descriptions", {})[axis] = definition["definition"]
+        for kind in ("targets", "group_by", "document_level_group_by"):
+            if axis not in value["aggregate"][kind]:
+                value["aggregate"][kind].append(axis)
     return value
 
 
 def retrieval_policy() -> dict[str, int]:
     return dict(load_tool_contract()["retrieval_policy"])
+
+
+def property_family_canonical_ids() -> dict[str, tuple[str, ...]]:
+    return {key: tuple(values) for key, values in query_classification.load_registry()["property_families"].items()}
 
 
 def apply_retrieval_policy(call: dict[str, Any], *, candidate_only: bool = False) -> dict[str, Any]:
@@ -71,7 +89,7 @@ def _load_json_config(name: str) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def load_coating_family_aliases() -> dict[str, str]:
-    raw = _load_json_config("coating_family_aliases.json")
+    raw = query_classification.load_registry()["legacy_coating_tables"]["aliases"]
     aliases = raw.get("aliases") if isinstance(raw.get("aliases"), dict) else raw
     return {
         str(k).strip().casefold(): str(v).strip().casefold()
@@ -82,7 +100,7 @@ def load_coating_family_aliases() -> dict[str, str]:
 
 @lru_cache(maxsize=1)
 def load_coating_family_multi_value() -> dict[str, list[str]]:
-    raw = _load_json_config("coating_family_multi_value.json")
+    raw = query_classification.load_registry()["legacy_coating_tables"]["multi_value"]
     expand = raw.get("expand") if isinstance(raw.get("expand"), dict) else {}
     out: dict[str, list[str]] = {}
     for key, values in expand.items():
@@ -94,7 +112,7 @@ def load_coating_family_multi_value() -> dict[str, list[str]]:
 
 @lru_cache(maxsize=1)
 def load_coating_family_concepts() -> tuple[dict[str, list[str]], dict[str, str]]:
-    raw = _load_json_config("coating_family_concepts.json")
+    raw = query_classification.load_registry()["legacy_coating_tables"]["concepts"]
     concepts_raw = raw.get("concepts") if isinstance(raw.get("concepts"), dict) else {}
     alias_raw = raw.get("concept_aliases") if isinstance(raw.get("concept_aliases"), dict) else {}
     concepts = {
@@ -332,10 +350,8 @@ def normalize_coating_families(value: Any) -> tuple[list[str], list[str], list[s
     return values, adjustments, unsupported
 
 
-_CN_COATING_CLASS_MAP = {
-    "防污": "antifouling",
-    "污损释放": "foul_release",
-}
+def _application_class_aliases() -> dict[str, str]:
+    return query_classification.load_registry()["legacy_coating_tables"]["applications_aliases"]
 
 
 def _application_coating_class_tokens() -> set[str]:
@@ -343,7 +359,7 @@ def _application_coating_class_tokens() -> set[str]:
     tokens.update(load_coating_family_multi_value().keys())
     tokens.update(load_coating_family_concepts()[0].keys())
     tokens.update(load_coating_family_aliases().values())
-    tokens.update(_CN_COATING_CLASS_MAP.keys())
+    tokens.update(_application_class_aliases().keys())
     return tokens
 
 
@@ -356,7 +372,7 @@ def migrate_applications_coating_classes(
     class_tokens = _application_coating_class_tokens()
     for item in applications:
         key = item.casefold()
-        token = _CN_COATING_CLASS_MAP.get(item, item)
+        token = _application_class_aliases().get(item, item)
         token_key = token.casefold()
         if key in class_tokens or token_key in class_tokens:
             resolved, adj, bad = resolve_coating_family_token(token)
@@ -439,6 +455,7 @@ def normalize_filter_request(tool: str, value: Any) -> dict[str, Any]:
     requested: dict[str, Any] = {}
     unsupported: list[str] = []
     adjustments: list[str] = []
+    candidates: list[dict[str, Any]] = []
     canonical_values: dict[str, Any] = {}
     for key, raw_value in raw.items():
         if not has_value(raw_value):
@@ -466,11 +483,19 @@ def normalize_filter_request(tool: str, value: Any) -> dict[str, Any]:
                     adjustments.append("qa_policy_invalid_defaulted")
             else:
                 effective[field] = text
+        elif field_type == "classification_list":
+            resolution = query_classification.normalize_axis(field, raw_value)
+            effective[field] = resolution["values"]
+            unsupported.extend(f"{field}:{json.dumps(item, ensure_ascii=False)}" for item in resolution["unsupported"])
+            adjustments.extend("classification:" + json.dumps(item, ensure_ascii=False, sort_keys=True) for item in resolution["adjustments"])
+            candidates.extend(resolution["candidates"])
         elif field_type == "material_role_list":
             roles, rejected = normalize_material_roles(raw_value, contract)
             effective[field] = roles
             if rejected:
                 adjustments.append("material_roles_invalid_values_removed")
+                unsupported.extend(f"material_roles:{role}" for role in normalize_string_list(raw_value)
+                                   if normalize_material_roles([role], contract)[1])
         elif field_type == "material_group_list":
             groups, resin_migrated, group_adj, group_unsup = normalize_material_groups(raw_value, contract)
             effective[field] = groups
@@ -486,6 +511,11 @@ def normalize_filter_request(tool: str, value: Any) -> dict[str, Any]:
                     if resin not in existing:
                         existing.append(resin)
                 effective["resin_systems"] = existing
+        elif field == "property_families":
+            values = normalize_string_list(raw_value)
+            families = property_family_canonical_ids()
+            effective[field] = [item for item in values if item in families]
+            unsupported.extend(f"property_families:{item}" for item in values if item not in families)
         elif field == "resin_systems":
             effective[field] = normalize_resin_systems(raw_value)
         else:
@@ -540,11 +570,18 @@ def normalize_filter_request(tool: str, value: Any) -> dict[str, Any]:
         if key in allowed and key not in effective:
             effective[key] = []
 
+    # Retain historical predicates instead of silently equating market and function.
+    for field in ("application_family", "coating_families"):
+        if has_value(effective.get(field)):
+            adjustments.append(f"legacy_semantics_preserved:{field}")
+
     return {
         "requested_filters": requested,
         "effective_filters": effective,
         "unsupported_constraints": sorted(unsupported),
         "route_adjustments": list(dict.fromkeys(adjustments)),
+        "constraint_candidates": candidates,
+        "classification_registry_version": query_classification.load_registry()["version"],
     }
 
 
@@ -575,6 +612,10 @@ def openai_filter_properties(tool: str) -> dict[str, Any]:
             item_schema: dict[str, Any] = {"type": "string"}
             if field_type == "material_role_list":
                 item_schema["enum"] = role_values
+            elif field_type == "classification_list":
+                item_schema["enum"] = query_classification.axis_definitions()[field]["values"]
+            elif field == "property_families":
+                item_schema["enum"] = list(property_family_canonical_ids())
             schema = {"type": "array", "items": item_schema}
         if descriptions.get(field):
             schema["description"] = str(descriptions[field])

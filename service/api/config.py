@@ -60,6 +60,7 @@ class CoatingApiSettings:
     kg_hybrid_search_url: str = "http://127.0.0.1:8021/tools/kg.hybrid_search"
     kg_sql_aggregate_url: str = "http://127.0.0.1:8021/tools/kg.sql_aggregate"
     kg_doc_field_scan_url: str = "http://127.0.0.1:8021/tools/kg.doc_field_scan"
+    kg_lookup_vocabulary_url: str = "http://127.0.0.1:8021/tools/kg.lookup_vocabulary"
     kg_expand_token: str = ""
     kg_timeout_seconds: int = 60
     llm_api_key: str = ""
@@ -158,6 +159,10 @@ class CoatingApiSettings:
                 "KG_DOC_FIELD_SCAN_URL",
                 "http://127.0.0.1:8021/tools/kg.doc_field_scan",
             ),
+            kg_lookup_vocabulary_url=values.get(
+                "KG_LOOKUP_VOCABULARY_URL",
+                "http://127.0.0.1:8021/tools/kg.lookup_vocabulary",
+            ),
             kg_expand_token=values.get("KG_EXPAND_TOKEN", ""),
             kg_timeout_seconds=_int_env(values.get("KG_EXPAND_TIMEOUT_SECONDS"), 60),
             llm_api_key=api_key,
@@ -191,11 +196,13 @@ class CoatingApiSettings:
             "KG_HYBRID_SEARCH_URL": self.kg_hybrid_search_url,
             "KG_SQL_AGGREGATE_URL": self.kg_sql_aggregate_url,
             "KG_DOC_FIELD_SCAN_URL": self.kg_doc_field_scan_url,
+            "KG_LOOKUP_VOCABULARY_URL": self.kg_lookup_vocabulary_url,
             "KG_EXPAND_TOKEN": self.kg_expand_token,
             "KG_EXPAND_TIMEOUT_SECONDS": str(self.kg_timeout_seconds),
             "KG_HYBRID_SEARCH_TIMEOUT_SECONDS": str(self.kg_timeout_seconds),
             "KG_SQL_AGGREGATE_TIMEOUT_SECONDS": str(self.kg_timeout_seconds),
             "KG_DOC_FIELD_SCAN_TIMEOUT_SECONDS": str(self.kg_timeout_seconds),
+            "KG_LOOKUP_VOCABULARY_TIMEOUT_SECONDS": str(self.kg_timeout_seconds),
             "LLM_API_PROTOCOL": self.llm_protocol,
             "LLM_BASE_URL": self.llm_base_url,
             "LLM_MODEL": self.llm_model,

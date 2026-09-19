@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.request
 from typing import Any
@@ -19,6 +20,33 @@ from demo_config import (
     KG_SQL_AGGREGATE_URL,
 )
 from demo_text import clamp_int, normalize_kg_aggregate_filters, normalize_kg_search_filters, normalize_string_list
+
+
+def kg_lookup_vocabulary(
+    query: str, *, dimension: str | None = None, limit: int = 20,
+) -> dict[str, Any]:
+    endpoint = os.environ.get(
+        "KG_LOOKUP_VOCABULARY_URL",
+        KG_HYBRID_SEARCH_URL.rsplit("/", 1)[0] + "/kg.lookup_vocabulary",
+    )
+    body = {"query": query, "limit": clamp_int(limit, 20, 1, 100)}
+    if dimension is not None:
+        body["dimension"] = dimension
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if KG_EXPAND_TOKEN:
+        headers["Authorization"] = f"Bearer {KG_EXPAND_TOKEN}"
+    req = urllib.request.Request(
+        endpoint, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers=headers, method="POST",
+    )
+    timeout = clamp_int(os.environ.get("KG_LOOKUP_VOCABULARY_TIMEOUT_SECONDS"), KG_HYBRID_SEARCH_TIMEOUT_SECONDS, 1, 600)
+    started = time.time()
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    payload.setdefault("tool", "kg.lookup_vocabulary")
+    payload["endpoint"] = endpoint
+    payload["elapsed_ms"] = round((time.time() - started) * 1000)
+    return payload
 
 
 def kg_expand_hyperedge_multihop(

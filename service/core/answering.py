@@ -17,6 +17,7 @@ import urllib.request
 from typing import Any, Iterator
 
 from demo_config import PROJECT_ROOT, ROOT
+from demo_text import doc_id_lookup_key
 from stream_diagnostics import StreamDiagnostics
 
 
@@ -208,8 +209,8 @@ def stream_timeout_customer_message(reason: str, *, had_content: bool) -> str:
     }
     label = labels.get(reason, "流式响应超时")
     if had_content:
-        return f"\n\n[回答因{label}被截断。前面的内容已保留，可以继续追问“继续”。]"
-    return f"模型流式响应因{label}中止，没有收到可用内容。可以稍后重试或换一个更窄的问题。"
+        return f"\n\n[回答因{label}被截断。前面的内容已保留，剩余部分本轮未完成。]"
+    return f"模型流式响应因{label}中止，没有收到可用内容；本轮回答未完成，原问题和筛选条件未改变。"
 
 
 def set_response_socket_timeout(response: Any, seconds: float) -> None:
@@ -374,6 +375,23 @@ def aggregate_count_statements(packet: dict[str, Any]) -> list[str]:
             if isinstance(values, list) and values
         }
         scope = "；".join(f"{key}={values}" for key, values in sorted(applied.items()))
+        coverage = result.get("classification_coverage") or {}
+        warnings = result.get("warnings") or []
+        scope_label = f"筛选口径（{scope}）" if applied else "全库范围（没有应用任何筛选条件）"
+        if result.get("cohort_available") is False or "aggregate_cohort_unavailable_not_evidence_of_absence" in warnings:
+            statements.append(f"已保持原查询条件；{scope_label}的统计数据本轮不可用，不能报告为 0 {unit}。")
+            continue
+        classification_incomplete = (
+            result.get("classification_complete") is False
+            or coverage.get("complete_for_requested_axes") is False
+            or "classification_coverage_incomplete_not_evidence_of_absence" in warnings
+        )
+        if result.get("status") == "empty" and classification_incomplete:
+            statements.append(
+                f"按{scope_label}，本轮已分类记录中观察到 0 {unit}匹配。已保持原查询条件；"
+                "分类覆盖不完整，缺失或未映射记录是否相关未知，可能漏检，不能据此断言相关记录不存在。"
+            )
+            continue
         if not applied:
             statements.append(
                 f"全库范围（没有应用任何筛选条件）共 {count} {unit}。"
@@ -382,11 +400,10 @@ def aggregate_count_statements(packet: dict[str, Any]) -> list[str]:
         elif result.get("status") == "empty":
             total = result.get("unfiltered_total_distinct_count")
             total_part = f"全库（无筛选）共 {total} {unit}；" if total is not None else ""
-            warnings = result.get("warnings") or []
             if any("vocabulary_valid" in str(w) for w in warnings):
                 statements.append(
                     f"按筛选口径（{scope}）统计命中 0 {unit}。{total_part}"
-                    "该口径下知识图谱当前确实没有匹配记录；如需更宽的范围请换一个筛选口径再问。"
+                    "已保持原筛选条件；当前可查询数据在该口径下没有匹配记录。"
                 )
             else:
                 statements.append(
@@ -396,6 +413,234 @@ def aggregate_count_statements(packet: dict[str, Any]) -> list[str]:
         else:
             statements.append(f"按筛选口径（{scope}）统计，知识图谱命中 {count} {unit}。")
     return statements
+
+
+def _aggregate_success(row: dict[str, Any]) -> bool:
+    result = row.get("result")
+    return (
+        isinstance(result, dict)
+        and row.get("status") in {"ok", "empty"}
+        and result.get("status", row.get("status")) in {"ok", "empty"}
+        and not row.get("error") and not result.get("error")
+        and not result.get("unsupported_constraints")
+    )
+
+
+def _aggregate_coverage_lines(result: dict[str, Any]) -> list[str]:
+    coverage = result.get("classification_coverage") or {}
+    lines: list[str] = []
+    if coverage:
+        lines.append("分类覆盖检查（不是筛选命中数；source-doc 按来源与文档的组合计数）：")
+        if coverage.get("scope") == "db_cohort_before_profile_axes":
+            lines.append("覆盖范围为应用分类轴筛选前的数据集合，与上面的筛选命中范围不同。")
+        for key, label, unit in (
+            ("source_doc_count", "来源文档", "个 source-doc"),
+            ("publication_count", "公开文献", "篇去重公开文献"),
+            ("unmapped_profile_count", "存在未映射字段", "个 source-doc"),
+        ):
+            if coverage.get(key) is not None:
+                lines.append(f"{label}：{coverage[key]} {unit}。")
+        axes = coverage.get("axes") or {}
+        labels = {"mapped": "已映射", "partial": "部分映射", "unclassified": "未分类",
+                  "missing_profile": "缺失档案", "missing_source": "缺失来源", "ambiguous_profile": "档案存在歧义"}
+        for axis in coverage.get("requested_axes") or []:
+            states = axes.get(axis) or {}
+            values = "；".join(f"{labels.get(key, key)} {value}" for key, value in states.items())
+            lines.append(f"{axis}：{values or '未提供覆盖计数'}（source-doc）。")
+    incomplete = (
+        result.get("classification_complete") is False
+        or coverage.get("complete_for_requested_axes") is False
+        or "classification_coverage_incomplete_not_evidence_of_absence" in (result.get("warnings") or [])
+    )
+    if incomplete:
+        lines.append("请求分类轴的覆盖不完整；以上是当前筛选口径下观察到的统计结果，不代表相关专利全集。")
+    elif coverage.get("complete_for_requested_axes") is True:
+        lines.append("请求分类轴的覆盖检查通过；这不表示所有其他分类轴完整或知识图谱覆盖全部专利。")
+    if coverage or incomplete:
+        lines.append("缺失或未映射记录是否相关未知，可能漏检；缺失不证明相关或不相关，"
+                     "不能据此估计漏检数量或专利密度，也不能将这些计数加到命中专利数中。")
+    return lines
+
+
+def _aggregate_display_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return "；".join(f"{key}：{_aggregate_display_value(item)}" for key, item in value.items())
+    if isinstance(value, list):
+        return "、".join(_aggregate_display_value(item) for item in value)
+    return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
+def _render_aggregate_result(result: dict[str, Any]) -> str | None:
+    interpretation = result.get("query_interpretation") or {}
+    coverage = result.get("classification_coverage") or {}
+    if not isinstance(interpretation, dict) or not isinstance(coverage, dict):
+        return None
+    axes = coverage.get("axes") or {}
+    if not isinstance(axes, dict) or not isinstance(coverage.get("requested_axes") or [], list):
+        return None
+    if any(not isinstance(states, dict) or any(type(value) is not int or value < 0 for value in states.values())
+           for states in axes.values()):
+        return None
+    for key in ("source_doc_count", "publication_count", "unmapped_profile_count"):
+        if coverage.get(key) is not None and (type(coverage[key]) is not int or coverage[key] < 0):
+            return None
+    intent, target = interpretation.get("intent"), interpretation.get("target")
+    if intent not in {"distinct_count", "list_distinct", "group_count"} or not isinstance(target, str) or not target:
+        return None
+    summary, items = result.get("summary"), result.get("items")
+    if not isinstance(summary, dict) or not isinstance(items, list):
+        return None
+    for key in ("distinct_count", "total_count", "total_distinct_docs", "matched_doc_count",
+                "classified_doc_count", "unknown_doc_count", "bucket_membership_count", "group_count"):
+        value = summary.get(key, result.get(key))
+        if value is not None and (type(value) is not int or value < 0):
+            return None
+    count = summary.get("distinct_count", summary.get("total_count"))
+    if type(count) is not int or count < 0:
+        return None
+    if result.get("status") == "empty" and (count or items):
+        return None
+    if any(not isinstance(item, dict) or "value" not in item
+           or type(item.get("count")) is not int or item["count"] < 0
+           or not isinstance(item.get("group_values") or {}, dict) for item in items):
+        return None
+    bucket_unit = {"patent": "篇专利（去重）", "formulation": "个配方（去重）",
+                   "hyperedge": "条超边记录"}.get(result.get("count_unit"))
+    if not bucket_unit:
+        return None
+    distinct_target = summary.get("distinct_count_unit") or target
+    if not isinstance(distinct_target, str):
+        return None
+    for dimensions in (interpretation.get("group_by"), result.get("requested_group_by"), result.get("effective_group_by")):
+        if dimensions is not None and (not isinstance(dimensions, list) or any(not isinstance(dim, str) for dim in dimensions)):
+            return None
+    # Composite document buckets count documents, not distinct axis labels.
+    if intent == "group_count" and result.get("effective_group_by") and not summary.get("distinct_count_unit"):
+        distinct_target = "doc_id"
+    distinct_unit = AGGREGATE_COUNT_UNITS.get(distinct_target, f"个不同 {distinct_target} 值")
+    lines = [f"当前筛选口径命中 **{count} {distinct_unit}**。"]
+    previous_filters = None
+    for key, label in (("requested_filters", "请求筛选"), ("effective_filters", "实际筛选")):
+        filters = result.get(key, interpretation.get("filters") or {})
+        if not isinstance(filters, dict):
+            return None
+        applied = {key: value for key, value in filters.items()
+                   if key != "qa_policy" and value not in (None, "", [], {})}
+        if applied != previous_filters:
+            lines.append(label + "：" + (_aggregate_display_value(applied) if applied else "无用户筛选条件（全库口径）"))
+        previous_filters = applied
+    previous_dimensions = None
+    for key, label in (("requested_group_by", "请求分组"), ("effective_group_by", "实际分组")):
+        dimensions = result.get(key, interpretation.get("group_by") or [])
+        if dimensions and dimensions != previous_dimensions:
+            lines.append(label + "：" + _aggregate_display_value(dimensions))
+        previous_dimensions = dimensions
+    matched_docs = summary.get("total_distinct_docs", summary.get("matched_doc_count"))
+    if matched_docs is not None and (distinct_target != "doc_id" or matched_docs != count):
+        lines.append(f"匹配专利：{matched_docs} 篇（去重）。")
+    for key, label in (
+        ("classified_doc_count", "已分类专利"), ("unknown_doc_count", "分类未知专利"),
+    ):
+        value = summary.get(key, result.get(key))
+        if value is not None:
+            if type(value) is not int or value < 0:
+                return None
+            lines.append(f"{label}：{value} 篇（去重）。")
+    if intent == "group_count":
+        membership = summary.get("bucket_membership_count", result.get("bucket_membership_count"))
+        if membership is not None:
+            lines.append(f"分组成员关系：{membership}。")
+        lines.append("分组可重叠，不能将分组数相加当作去重专利数。")
+        total = summary.get("group_count")
+        if type(total) is int and total > len(items):
+            lines.append(f"已返回 {len(items)}/{total} 个分组，分组清单不完整。")
+        else:
+            lines.append(f"已返回 {len(items)} 个分组。")
+    elif intent == "list_distinct":
+        lines.append(f"已返回 {len(items)} 条清单记录；目标去重数量为 {count}，返回条数不等于去重数量。")
+    if result.get("truncated") or result.get("has_more"):
+        lines.append("工具标记结果尚有未返回部分，本清单不完整。")
+    displayed_items = items if intent in {"group_count", "list_distinct"} else []
+    if displayed_items:
+        dimensions = result.get("effective_group_by") or interpretation.get("group_by") or []
+        dimensions = list(dict.fromkeys([*dimensions, *(key for item in items for key in (item.get("group_values") or {}))]))
+        dimensions = dimensions or [target]
+        lines.extend(["", "| " + " | ".join(_aggregate_display_value(dim) for dim in dimensions)
+                      + f" | 数量（{bucket_unit}） |", "| " + " | ".join(["---"] * (len(dimensions) + 1)) + " |"])
+        for item in displayed_items:
+            group = item.get("group_values") or {dimensions[0]: item["value"]}
+            lines.append("| " + " | ".join(_aggregate_display_value(group.get(dim, "未提供")) for dim in dimensions)
+                         + f" | {item['count']} |")
+    for item in displayed_items:
+        unknown_year = (item.get("group_values") or {}).get("publication_year") == "unknown_year" or item["value"] == "unknown_year"
+        if intent == "group_count" and not unknown_year and not item.get("doc_ids"):
+            continue
+        # Examples establish bucket membership only, never formulation/test/page claims.
+        docs = {}
+        for example in item.get("examples") or []:
+            if isinstance(example, dict) and isinstance(example.get("doc_id"), str) and example["doc_id"].strip():
+                doc = example["doc_id"].strip()
+                docs.setdefault(doc_id_lookup_key(doc) or doc.casefold(), doc)
+        for doc in item.get("doc_ids") or []:
+            if isinstance(doc, str) and doc.strip():
+                docs.setdefault(doc_id_lookup_key(doc) or doc.casefold(), doc)
+        doc_count = item.get("doc_count")
+        if docs or (intent == "group_count" and doc_count is not None):
+            lines.append("\n" + _aggregate_display_value(item.get("group_values") or item["value"]))
+            if type(doc_count) is int and doc_count >= 0:
+                completeness = "完整" if len(docs) == doc_count else "不完整"
+                lines.append(f"文档清单：{len(docs)}/{doc_count}（{completeness}）：" + "、".join(docs.values()))
+            else:
+                lines.append("返回的文档身份（完整性未知）：" + "、".join(docs.values()))
+    if result.get("status") == "empty":
+        incomplete = result.get("classification_complete") is False or (
+            result.get("classification_coverage") or {}).get("complete_for_requested_axes") is False
+        incomplete = incomplete or "classification_coverage_incomplete_not_evidence_of_absence" in (result.get("warnings") or [])
+        lines.append("已保持原筛选条件；" + ("本轮已分类记录中未观察到匹配，不能断言相关记录不存在。" if incomplete
+                     else "当前可查询数据在该口径下没有匹配记录，不表示其他口径或未收录数据中不存在。"))
+    lines.extend(_aggregate_coverage_lines(result))
+    return "\n".join(lines)
+
+
+def structured_aggregate_answer(packet: dict[str, Any]) -> str | None:
+    """Deliver only current, successful aggregate receipts without model inference."""
+    rows = packet.get("tool_observations") or []
+    if not isinstance(rows, list):
+        return None
+    current_turn = next((turn.get("turn_id") for turn in reversed(packet.get("recent_turns") or [])
+                         if isinstance(turn, dict) and turn.get("role") == "user"), None)
+    rendered: list[str] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return None
+        if current_turn and row.get("turn_id") != current_turn:
+            return None
+        if row.get("tool") == "kg.lookup_vocabulary":
+            if _aggregate_success(row):
+                continue
+            result = row.get("result") or {}
+            if not isinstance(result, dict):
+                return None
+            # A prior unsupported lookup is ancillary only after its own correction succeeds.
+            resolved = row.get("status") == "unsupported" and result.get("status") == "unsupported" and any(
+                later.get("tool") == "kg.lookup_vocabulary" and _aggregate_success(later)
+                and (not result.get("query") or later["result"].get("query") == result["query"])
+                and (later["result"].get("parameter_correction") or {}).get("unsupported_receipt") == result
+                for later in rows[index + 1:] if isinstance(later, dict)
+            )
+            if resolved:
+                continue
+            return None
+        if row.get("tool") != "kg.sql_aggregate" or not _aggregate_success(row):
+            return None
+        result = row["result"]
+        if result.get("cohort_available") is False or "aggregate_cohort_unavailable_not_evidence_of_absence" in (result.get("warnings") or []):
+            return None
+        text = _render_aggregate_result(result)
+        if text is None:
+            return None
+        rendered.append(text)
+    return "\n\n".join(rendered) if rendered else None
 
 
 MODEL_PACKET_CONTEXT_SECTIONS = (
@@ -516,6 +761,8 @@ def _compact_current_tool_observation(observation: Any) -> dict[str, Any]:
                 "rank", "value", "canonical_id", "count", "doc_count", "assignee_count", "assignees",
                 "object_id", "doc_id", "hyperedge_id", "sample_id", "property", "material_role", "page",
                 "facts", "unresolved", "evidence_gate", "examples",
+                "group_values", "classification", "dimension", "definition", "aliases", "roles",
+                "canonical_ids", "vocabulary_scope",
             )
             if item.get(key) is not None
         }
@@ -643,6 +890,19 @@ def build_model_messages(
         "preserve any useful supported result, and reuse the same receipt if the user repeats the request. "
         "requested_filters are what was asked, effective_filters are what was actually applied, and route_adjustments "
         "must never be hidden.\n"
+        "Classification results describe source document labels, not proof that every sample has a property. "
+        "Read classification_complete and classification_coverage: if coverage is incomplete, report the observed "
+        "classified matches and explain the missing or unmapped coverage. Zero observed matches is then NOT proof "
+        "of absence. If cohort_available is false, the statistic was unavailable, not zero. Never substitute a "
+        "different market, function, layer, form, process or sample constraint. Preserve all group_values dimensions; "
+        "bucket memberships can exceed distinct patents for multi-valued classifications.\n"
+        "Classification coverage counts are source-doc memberships, not unique patents: the same publication "
+        "may occur in multiple sources. Do not relabel source_doc_count, unmapped_profile_count or per-axis "
+        "missing/unmapped counts as unique patent counts or add them to classified matches. "
+        "Missing or unmapped classification proves neither relevance nor irrelevance to the requested topic. "
+        "Say their relevance is unknown and relevant records may have been missed; do not assert that "
+        "unmapped records are actually relevant, that all are irrelevant, or estimate missed relevant patents "
+        "from the missing/unmapped counts.\n"
         "RESPECT THE COUNT THE USER ASKED FOR. When no display count is specified, show up to three distinct samples. "
         "When the user asks for one, focus on one; this does not reduce the evidence reviewed. Honor other explicit "
         "counts subject to verified evidence. Identify samples by source, patent and sample_id, falling back to context_id. "
@@ -676,8 +936,8 @@ def build_model_messages(
         "test values) may still be cited from their own observations.\n"
         "If a kg.sql_aggregate result has status=empty with non-empty applied filters and its warnings indicate a "
         "possible filter miss (aggregate_filters_returned_empty), describe it as 该筛选口径未命中 — never as "
-        "知识图谱没有收录/不存在/0篇收录. Mention unfiltered_total_distinct_count when present, and give the user one "
-        "concrete rephrasing to copy for the next turn. If instead the warnings say the filters are vocabulary-valid "
+        "知识图谱没有收录/不存在/0篇收录. Mention unfiltered_total_distinct_count when present and preserve the "
+        "original conditions without asking the user to rephrase or broaden them. If instead the warnings say the filters are vocabulary-valid "
         "(a true zero), you may state plainly that the KG currently has no records under that exact scope, naming the scope.\n"
         "If summary.applied_filters is empty, the count is the WHOLE KG. Never attribute it to a topic word "
         "from the question (for example, never present the all-KG total as a 光纤/船舶/某领域 count).\n"
@@ -1450,6 +1710,16 @@ def stream_qwen(
             "model": model,
         }
         yield {"type": "done", "provider": "scope-resolver", "model": model}
+        return
+    # Both packet builders isolate current turns; all delivery paths share Track A's allowlist.
+    aggregate_answer = structured_aggregate_answer(project_model_packet(packet))
+    if aggregate_answer is not None:
+        receipt = copy.deepcopy(packet.get("evidence_delivery") or {})
+        receipt.update(answer_outcome="structured_aggregate", attempts=0,
+                       aggregate_observation_count=sum(row.get("tool") == "kg.sql_aggregate"
+                                                       for row in packet.get("tool_observations") or []))
+        yield {"type": "delta", "content": aggregate_answer, "provider": "structured-aggregate", "model": model}
+        yield {"type": "done", "provider": "structured-aggregate", "model": model, "evidence_delivery": receipt}
         return
     api_key = cfg["api_key"]
     base_url = cfg["base_url"]

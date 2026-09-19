@@ -752,6 +752,12 @@ class CoatingConversationEngine:
             yield item
 
     def call_tool(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if name == "kg.lookup_vocabulary":
+            return self.runtime.tool_clients.kg_lookup_vocabulary(
+                str(payload.get("query") or ""),
+                dimension=payload.get("dimension"),
+                limit=payload.get("limit", 20),
+            )
         if name == "kg.hybrid_search":
             return self.runtime.tool_clients.kg_hybrid_search(
                 str(payload.get("query") or ""),

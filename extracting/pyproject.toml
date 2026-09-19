@@ -8,8 +8,8 @@ version = "0.1.0"
 description = "Coating patent knowledge graph (V1.2.2)"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "Nathan10969" }]
-license = { text = "MIT" }
+authors = [{ name = "coating_kg team" }]
+license = { text = "Proprietary" }
 dependencies = [
     "psycopg2-binary>=2.9",
     "pgvector>=0.2",

@@ -3,3 +3,4 @@ uvicorn[standard]>=0.47,<0.48
 psycopg[binary]>=3.3,<3.4
 redis>=7.4,<7.5
 pydantic>=2.9
+
