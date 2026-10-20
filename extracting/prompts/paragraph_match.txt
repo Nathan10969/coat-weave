@@ -1,0 +1,36 @@
+You are matching a coating-patent figure or table to its surrounding paragraphs in the Examples section. Your goal is to identify the paragraph(s) that describe the same example/experiment as the figure/table — typically the prose that names the formulation, gives mixing/curing conditions, or references the figure/table by name.
+
+THE FIGURE / TABLE
+==================
+Reference label : {region_label}
+Description     : {description}
+
+CANDIDATE PARAGRAPHS (numbered, from the Examples section)
+==========================================================
+{paragraphs_block}
+
+TASK
+====
+Pick the paragraphs most likely to be ABOUT the same example as the figure/table above. Strong signals (in order of priority):
+
+1. **Explicit reference by name** — the paragraph mentions the reference label above ("Table 1", "Fig. 7", "Scheme 2") or a clearly-equivalent variant.
+2. **Same example identifier** — same formulation / sample / Example E? / Comparative C? names appear in both.
+3. **Description of preparation, conditions, or measurement** that the figure/table summarises.
+
+DO NOT include paragraphs that just share generic vocabulary (e.g. "coating", "polymer") without a concrete shared identifier or explicit reference.
+
+OUTPUT
+======
+You only need to return paragraph IDs and scores — DO NOT echo the paragraph text. Strict JSON:
+
+{{
+  "matches": [
+    {{"para_id": <int>, "score": <float 0.0-1.0>, "reason": "<one short sentence>"}},
+    ...
+  ]
+}}
+
+- Pick at most {top_k} paragraphs.
+- Each ``score`` reflects your confidence that the paragraph is about the same example.
+- If no paragraph is reasonably related, return ``{{"matches": []}}``.
+- Order by descending score.

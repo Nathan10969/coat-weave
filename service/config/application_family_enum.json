@@ -1,0 +1,106 @@
+{
+ "generated_at": "2026-06-12T14:30:00+0800",
+ "note": "Router-facing closed enum for filters.application_family. Descriptions probe-tested (42/45, 45/45 unanimous).",
+ "families": [
+  {
+   "key": "marine",
+   "description": "船舶海洋:船体、海工平台及水下/近水结构的防护与防污涂料。别名提示:防污漆/antifouling、污损释放/fouling release、船底漆/船壳 ship hull、自抛光 self-polishing、车间底漆 shop primer、海洋平台/offshore、螺旋桨 propeller、渔网养殖 aquaculture"
+  },
+  {
+   "key": "automotive",
+   "description": "汽车:整车 OEM 与零部件涂装及修补(动力电池相关归 ev_battery)。别名提示:原厂漆/OEM、修补漆/refinish、色漆-清漆 basecoat/clearcoat、汽车内外饰、保险杠/塑料件喷涂、漆面保护膜 PPF、轮胎侧壁、电动车车身"
+  },
+  {
+   "key": "optical_fiber",
+   "description": "光纤光缆:通信光纤拉丝涂覆及光缆相关材料(镜片/显示类归 optics_display)。别名提示:光纤涂料/optical fiber coating、内层/外层涂层 primary/secondary coating、光纤着色油墨 coloring ink、带纤/并带 ribbon matrix、紧包 tight buffer、光缆 cable、激光光纤/fiber laser"
+  },
+  {
+   "key": "optics_display",
+   "description": "光学与显示:镜片、光学膜、光学元件及显示器件表面处理。别名提示:眼镜片/ophthalmic lens、硬涂层 hardcoat、减反射 AR/antireflection、光学胶 optical adhesive、触摸屏 touch panel、OLED/LCD/彩色滤光片、防指纹 anti-smudge"
+  },
+  {
+   "key": "aerospace_defense",
+   "description": "航空航天与防务:飞机、直升机及军工装备的涂层、密封与结构粘接。别名提示:航空涂料/aerospace、飞机蒙皮/机翼、雷达罩 radome/雷达透波、防雷击 lightning strike protection、伪装 camouflage、航空密封剂 sealant、军用 military"
+  },
+  {
+   "key": "wind_energy",
+   "description": "风电:风机叶片与塔筒防护。别名提示:风电叶片/wind turbine blade、前缘保护 LEP/leading edge protection、抗雨蚀/rain erosion、塔筒 tower、风机叶轮 rotor blade"
+  },
+  {
+   "key": "industrial_general",
+   "description": "通用工业:泛工业制品涂装与工业设施维护,客户未指明具体行业时的工业类兜底。别名提示:工业维护漆 industrial maintenance、工业面漆/product finishing、农机与工程车辆、工业粉末喷涂、工业电泳 electrocoat、现场修补 field repair、耐高温工业漆"
+  },
+  {
+   "key": "protective_anticorrosive",
+   "description": "防腐防护与钢结构:陆上钢铁/金属基材长效防腐(船舶水下防污归 marine)。别名提示:防腐漆/anticorrosive、重防腐/protective、钢结构/桥梁/基础设施 infrastructure、金属底漆 metal primer、保温层下腐蚀 CUI、耐高温防腐、镀锌/ZAM 基材防护"
+  },
+  {
+   "key": "architectural_construction",
+   "description": "建筑装饰:建筑内外墙、混凝土/水泥基材的装饰防护及地坪。别名提示:建筑涂料/乳胶漆、外墙/facade、真石漆/质感涂料 textured、混凝土/砌体 masonry、地坪漆/环氧地坪 flooring(注意:库内地坪专利极少,回答时应提示覆盖薄弱)、装饰漆 decorative、隔热反射 solar reflective、道路标线 road marking"
+  },
+  {
+   "key": "food_beverage_packaging",
+   "description": "食品饮料包装与制罐:金属罐内外涂层及各类食品接触包装材料。别名提示:罐内涂料/can interior coating、易拉盖 easy open end、饮料罐/啤酒罐 beverage can、BPA-NI 无双酚A、罐外印涂 overvarnish、软包装 flexible packaging、纸品涂布 paper coating、食品接触 food contact"
+  },
+  {
+   "key": "wood_furniture",
+   "description": "木器家具与木地板:木质/板材基材涂饰及木地板。别名提示:木器漆/wood coating、家具漆 furniture、橱柜 kitchen cabinet、MDF/密度板/纤维板、封闭底漆 sealer、户外木保护、木地板 parquet"
+  },
+  {
+   "key": "coil_coating",
+   "description": "卷材涂装:金属卷材连续预涂、先涂后成型工艺。别名提示:卷材涂料/coil coating、彩涂板/预涂钢板 pre-painted steel、预涂金属 PCM/precoat metal、金属壁板 metal panel、先涂后成型"
+  },
+  {
+   "key": "oil_gas_pipeline",
+   "description": "油气石化与管道:油气开采炼化设施及输送管道内外防护与修复。别名提示:油气/oil & gas、管道涂料 pipeline、石化 petrochemical、管道内衬 pipe lining、供水管修复 rehabilitation"
+  },
+  {
+   "key": "electronics_electrical",
+   "description": "电子电气:电子元器件、半导体与电气设备的涂覆、灌封与绝缘。别名提示:PCB/线路板涂覆(三防漆 conformal)、灌封 potting/encapsulant、半导体 semiconductor、传感器 sensor、电线/漆包线 wire coating、消费电子 consumer electronics、架空导线 overhead conductor"
+  },
+  {
+   "key": "appliance_hvac",
+   "description": "家电暖通:家用电器及暖通制冷设备表面与功能涂层。别名提示:家电/appliance、空调 air conditioning、换热器/翅片 heat exchanger、暖通 HVAC、热泵 heat pump"
+  },
+  {
+   "key": "ev_battery",
+   "description": "动力电池:电动车电池包及电芯部件的绝缘、防火与热管理(车身涂装归 automotive)。别名提示:电池包/battery pack、电芯绝缘 cell insulation、热管理 thermal management、导热间隙填充 gap filler、耐电解液 electrolyte resistant、电池防火/热失控防护、EV 电池涂层"
+  },
+  {
+   "key": "solar_pv",
+   "description": "光伏太阳能:光伏组件及太阳能器件相关材料。别名提示:光伏/photovoltaic/PV、太阳能板 solar panel、组件封装 pottant/encapsulant、电池组件 solar cell module、聚光 light concentration"
+  },
+  {
+   "key": "medical",
+   "description": "医疗器械:医用器械与植入物表面涂层。别名提示:医疗器械/medical device、植入物 implant、医用涂层、微创器械、生物相容 biocompatible"
+  },
+  {
+   "key": "adhesives_sealants",
+   "description": "胶粘剂与密封胶:以粘接/密封为主要功能的产品(非成膜装饰涂料)。别名提示:胶粘剂/adhesive、结构胶 structural adhesive、密封胶 sealant/caulk、胶带 adhesive tape、瓷砖胶 tile adhesive、附着力促进剂 adhesion promoter、金属-碳纤维粘接 CFRP bonding、水性胶"
+  },
+  {
+   "key": "printing_ink",
+   "description": "印刷油墨与防伪:各类印刷油墨及防伪安全标识。别名提示:油墨/printing ink、凹印 gravure、柔印 flexo、喷墨 inkjet、胶印/平版 lithography、防伪 anti-counterfeit、安全标识/全息 security element"
+  },
+  {
+   "key": "fire_protection",
+   "description": "防火:建筑与钢结构被动防火及耐火涂层。别名提示:防火涂料/fireproof coating、膨胀型 intumescent、钢结构防火 structural fire protection、耐火 fire resistant、被动防火 PFP"
+  },
+  {
+   "key": "textile_leather",
+   "description": "纺织皮革:织物、皮革及鞋材的涂层与处理。别名提示:纺织涂层/textile coating、合成革/人造革 synthetic leather、鞋材 footwear、皮革复鞣 retanning、织物整理 treatment、家具面料 upholstery"
+  },
+  {
+   "key": "plastics_film",
+   "description": "塑料橡胶复合材料与薄膜基材:按基材定义的家族——塑料/橡胶/复材制件及柔性薄膜的表面涂饰与保护。别名提示:塑料涂料/plastic coating、PC/聚碳酸酯件、薄膜硬化 film hardcoat、表面保护膜 protective film、预浸料/prepreg、复材/碳纤维制件表面 composite surfacing、橡胶/硅胶涂层、PVC 基材"
+  },
+  {
+   "key": "consumer_goods",
+   "description": "消费品家居与厨具:日用消费品表面处理及厨具不粘体系。别名提示:炊具/cookware、烤盘 bakeware、不粘涂层 non-stick、卫浴洁具 sanitary ware、个人护理 personal care、硬表面清洁 hard surface cleaner"
+  },
+  {
+   "key": "other_specialty",
+   "description": "其他零散:特殊工艺及无法归入以上任何行业的零散应用(泛工业涂装请优先 industrial_general)。别名提示:3D 打印/光固化成型 stereolithography、激光焊接 laser welding、玻璃处理 glass treatment、乳液聚合表面活性剂 surfactant、通用基材/general coatings"
+  }
+ ]
+}

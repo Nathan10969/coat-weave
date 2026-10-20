@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "notes": "Closed hybrid expand only. Unknown compound strings stay unmapped + warning. No substring/regex guessing. Keep coating_family_raw for audit.",
+  "expand": {
+    "fouling_release_antifouling": ["antifouling", "foul_release"],
+    "antifouling_foul_release": ["antifouling", "foul_release"],
+    "antifouling_fouling_release": ["antifouling", "foul_release"],
+    "antifouling_fouling_release_system": ["antifouling", "foul_release"]
+  }
+}

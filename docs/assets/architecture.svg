@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="790" viewBox="0 0 1200 790" role="img" aria-labelledby="title desc">
+  <title id="title">CoatWeave architecture — knowledge production and retrieval service</title>
+  <desc id="desc">The extraction pipeline processes patent PDFs through layout, context, grounded facts and KG JSONL exports. A separate visual reconstruction path produces validated KG packs. An independent embedding job prepares PostgreSQL pgvector retrieval indexes. The service API on port 8031 calls read-only KG tools on port 8021, with model, embedding and session storage dependencies.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#89718a"/></marker>
+    <marker id="warm-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#c06a71"/></marker>
+  </defs>
+  <rect width="1200" height="790" rx="20" fill="#fff9f1"/>
+  <g font-family="Arial,Helvetica,sans-serif">
+    <text x="36" y="44" font-size="12" letter-spacing="2.4" font-weight="700" fill="#ab5270">01 / BUILD KNOWLEDGE</text>
+    <text x="36" y="77" font-size="24" font-weight="700" fill="#36304f">From patent pages to traceable records</text>
+    <text x="1164" y="44" text-anchor="end" font-size="11" fill="#8d7786">extracting/</text>
+    <g stroke-width="1.4">
+      <rect x="36" y="107" width="250" height="137" rx="14" fill="#fce6da" stroke="#edc9b8"/>
+      <rect x="329" y="107" width="250" height="137" rx="14" fill="#f8dfe8" stroke="#e8bacc"/>
+      <rect x="622" y="107" width="250" height="137" rx="14" fill="#ebe5f5" stroke="#cec0e6"/>
+      <rect x="915" y="107" width="249" height="137" rx="14" fill="#fcf0cf" stroke="#e7d49d"/>
+    </g>
+    <g fill="#8c6078" font-size="11" font-weight="700"><text x="56" y="133">INPUT</text><text x="349" y="133">LAYOUT + CONTEXT</text><text x="642" y="133">FACTS + SAMPLES</text><text x="935" y="133">KNOWLEDGE OUTPUT</text></g>
+    <g fill="#36304f" font-size="20" font-weight="700"><text x="56" y="166">Patent PDF</text><text x="349" y="166">Evidence units</text><text x="642" y="166">Grounded facts</text><text x="935" y="166">KG JSONL + CSV</text></g>
+    <g fill="#766575" font-size="13">
+      <text x="56" y="194">Your own source documents</text><text x="56" y="217">No corpus bundled</text>
+      <text x="349" y="194">MinerU API / layout cache</text><text x="349" y="217">Examples · crops · paragraphs</text>
+      <text x="642" y="194">Qwen / VLM · normalization</text><text x="642" y="217">Polarity · comparison · aliases</text>
+      <text x="935" y="194">Evidence-linked projection</text><text x="935" y="217">CSV is a derived view</text>
+    </g>
+    <g fill="none" stroke="#c06a71" stroke-width="2" marker-end="url(#warm-arrow)"><path d="M288 176H320"/><path d="M581 176H613"/><path d="M874 176H906"/></g>
+    <path d="M160 246V294H318" fill="none" stroke="#b28398" stroke-width="1.8" marker-end="url(#arrow)"/>
+    <rect x="329" y="268" width="835" height="83" rx="13" fill="#f6edf2" stroke="#e2ccda"/>
+    <text x="349" y="293" font-size="11" font-weight="700" letter-spacing="1" fill="#a14b76">ALTERNATIVE / VISUAL RECONSTRUCTION</text>
+    <g fill="#67476d" font-size="14"><text x="349" y="326">Rendered pages</text><text x="572" y="326">Agent reads evidence</text><text x="873" y="326">Validate + merge + project</text></g>
+    <g fill="none" stroke="#a97a9c" stroke-width="1.6" marker-end="url(#arrow)"><path d="M492 321H553"/><path d="M753 321H854"/><path d="M1128 266V253"/></g>
+    <path d="M1038 353V370" fill="none" stroke="#b08286" stroke-width="1.8" marker-end="url(#arrow)"/>
+    <path d="M1176 176H1184V402H1174" fill="none" stroke="#b08286" stroke-width="1.8" marker-end="url(#arrow)"/>
+    <path d="M1166 176H1176" fill="none" stroke="#b08286" stroke-width="1.8"/>
+    <rect x="714" y="379" width="450" height="61" rx="12" fill="#f2e3c2" stroke="#e0c58e"/>
+    <text x="734" y="404" font-size="13" font-weight="700" fill="#795b31">INDEX PREPARATION / embedding/jobs/</text>
+    <text x="734" y="425" font-size="12" fill="#8c7350">Hyperedges → embedding service → pgvector index</text>
+    <text x="36" y="398" font-size="13" fill="#96758b">Every fact keeps its evidence trail.</text>
+    <text x="36" y="421" font-size="12" fill="#9c8996">Document · page · region · sample · validation</text>
+    <path d="M36 468H1164" stroke="#e8d8d7"/>
+    <text x="36" y="504" font-size="12" letter-spacing="2.4" font-weight="700" fill="#7a5e9b">02 / QUERY KNOWLEDGE</text>
+    <text x="1164" y="504" text-anchor="end" font-size="11" fill="#8d7786">service/</text>
+    <g stroke-width="1.4">
+      <rect x="36" y="530" width="195" height="111" rx="14" fill="#f7e3dc" stroke="#e4c6bd"/>
+      <rect x="274" y="530" width="250" height="111" rx="14" fill="#ece5f5" stroke="#cfc0e2"/>
+      <rect x="567" y="530" width="250" height="111" rx="14" fill="#f7deea" stroke="#e5bdd1"/>
+      <rect x="860" y="530" width="304" height="111" rx="14" fill="#f8eccc" stroke="#e0c994"/>
+    </g>
+    <g fill="#36304f" font-size="20" font-weight="700"><text x="56" y="566">Client</text><text x="294" y="566">Coating API</text><text x="587" y="566">KG tools</text><text x="880" y="566">KG + retrieval index</text></g>
+    <g font-size="13" fill="#766575">
+      <text x="56" y="594">HTTP / SSE</text><text x="56" y="617">Questions + follow-ups</text>
+      <text x="294" y="594">8031 · auth · conversation</text><text x="294" y="617">Routing · planner · answers</text>
+      <text x="587" y="594">8021 · read-only operations</text><text x="587" y="617">Hybrid · multihop · SQL</text>
+      <text x="880" y="594">PostgreSQL + pgvector</text><text x="880" y="617">Prepared KG files / source manifest</text>
+    </g>
+    <g fill="none" stroke="#89718a" stroke-width="2" marker-end="url(#arrow)"><path d="M233 586H265"/><path d="M526 586H558"/><path d="M819 586H851"/><path d="M1012 442V520"/></g>
+    <path d="M399 643V674M692 643V674" fill="none" stroke="#c7afc8" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <g font-size="12" fill="#887087">
+      <rect x="274" y="678" width="250" height="56" rx="10" fill="#f3edf6"/>
+      <text x="294" y="700">Model API + session storage</text><text x="294" y="720">Postgres / Redis / workspace</text>
+      <rect x="567" y="678" width="250" height="56" rx="10" fill="#f7eaf1"/>
+      <text x="587" y="700">Embedding endpoint</text><text x="587" y="720">Default port 8010 · external service</text>
+    </g>
+    <text x="36" y="764" font-size="11" fill="#a48d99">SOURCE ARCHITECTURE · supplied data and deployment configuration required</text>
+    <text x="1164" y="764" text-anchor="end" font-size="11" fill="#a48d99">Concept diagram / not a runtime screenshot</text>
+  </g>
+</svg>

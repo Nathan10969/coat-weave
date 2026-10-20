@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "notes": "1->1 spelling/variant normalize only. Never alias fouling_control* into antifouling or foul_release. Independent canonicals: antifouling | foul_release | fouling_control.",
+  "aliases": {
+    "anti-fouling": "antifouling",
+    "anti_fouling": "antifouling",
+    "antifouling_marine": "antifouling",
+    "antifouling_topcoat": "antifouling",
+    "antifouling_marine_coating": "antifouling",
+    "antifouling_paint": "antifouling",
+    "foul-release": "foul_release",
+    "fouling_release": "foul_release",
+    "fouling_release_topcoat": "foul_release",
+    "foul_release": "foul_release",
+    "fouling_control_topcoat": "fouling_control",
+    "fouling_control_coating": "fouling_control",
+    "fouling_control": "fouling_control",
+    "fouling_release_edge_sealant": "foul_release",
+    "fouling_release_ice_release": "foul_release",
+    "antifouling": "antifouling"
+  }
+}

@@ -1,0 +1,44 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python/runtime state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+runtime_data/
+logs/
+*.log
+*.sqlite*
+
+# Large source and generated artifacts
+runs/
+data/
+output/
+/audit/
+backups/
+original_pdfs/
+pdf_*/
+*.pdf
+*.zip
+*.7z
+*.tar
+*.gz
+*.jsonl
+*.csv
+*.xlsx
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

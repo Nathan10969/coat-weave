@@ -1,0 +1,18 @@
+[Unit]
+Description=Coating API FastAPI service
+After=network-online.target redis.service postgresql.service coating-kg-tools.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/coating/coating_api_service
+EnvironmentFile=/root/coating/coating_api_service/.env
+ExecStart=/root/coating/envs/coating/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8031
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=30
+User=root
+
+[Install]
+WantedBy=multi-user.target

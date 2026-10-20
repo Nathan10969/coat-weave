@@ -1,0 +1,31 @@
+{
+  "dimensions": {
+    "application_family": [
+      "marine",
+      "automotive",
+      "industrial_general",
+      "protective_anticorrosive",
+      "architectural_construction",
+      "optical_fiber",
+      "food_beverage_packaging",
+      "plastics_film",
+      "aerospace_defense",
+      "adhesives_sealants",
+      "wood_furniture",
+      "electronics_electrical",
+      "optics_display",
+      "wind_energy",
+      "coil_coating",
+      "ev_battery",
+      "consumer_goods",
+      "other_specialty",
+      "fire_protection",
+      "printing_ink",
+      "oil_gas_pipeline",
+      "textile_leather",
+      "solar_pv",
+      "appliance_hvac",
+      "medical"
+    ]
+  }
+}
