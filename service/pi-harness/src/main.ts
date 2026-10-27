@@ -5,7 +5,7 @@ import { prepareLocalState, serverConfiguration } from "./config.js";
 const config = serverConfiguration(process.env);
 prepareLocalState(config, process.env);
 const api = createPiHttpServer({
-  factory: officialPiFactory(config.cwd, config.agentDir, config.toolMode),
+  factory: officialPiFactory(config.cwd, config.agentDir, config.toolMode, config.retrievalBackend),
   token: config.token,
   chatModels: [config.chatModel],
   completionTimeoutMs: config.timeout,

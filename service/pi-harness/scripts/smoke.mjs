@@ -15,10 +15,11 @@ await once(probe, "listening");
 const port = probe.address().port;
 await new Promise(resolve => probe.close(resolve));
 const token = "synthetic-smoke-service-token";
+const retrievalBackend = process.argv[2] || "milvus";
 const child = spawn(process.execPath, [fileURLToPath(new URL("../dist/main.js", import.meta.url))], {
   // Do not inherit model keys, private endpoints or an existing account state.
   env: { PATH: process.env.PATH, HOME: directory, PI_API_HOST: "127.0.0.1", PI_API_PORT: String(port),
-    PI_API_TOKEN: token, PI_PROJECT_CWD: join(directory, "workspace"),
+    PI_API_TOKEN: token, PI_RETRIEVAL_BACKEND: retrievalBackend, PI_PROJECT_CWD: join(directory, "workspace"),
     PI_AGENT_DIR: join(directory, "agent"), PI_EVENT_LOG_PATH: join(directory, "events.jsonl") },
   stdio: "ignore",
 });
@@ -42,7 +43,7 @@ try {
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.match(body.choices[0].message.content, /CoatWeave/);
-  console.log("Compiled API smoke passed: health, authentication and offline greeting; no external model or database call.");
+  console.log(`Compiled API smoke passed (${retrievalBackend}): health, authentication and offline greeting; no external model or database call.`);
 } finally {
   child.kill("SIGTERM");
   const timer = setTimeout(() => child.kill("SIGKILL"), 3000);

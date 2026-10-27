@@ -1,10 +1,13 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { toolNamesForMode } from "./tool-policy.js";
+import { loadKgConfig, retrievalBackend } from "./kg-tools.js";
 
 export function serverConfiguration(env: NodeJS.ProcessEnv, base = process.cwd()) {
   const toolMode = env.PI_TOOL_MODE || "read-only";
   toolNamesForMode(toolMode);
+  const backend = retrievalBackend(env);
+  if (backend === "kg") loadKgConfig(env);
   const host = env.PI_API_HOST || "127.0.0.1";
   const token = env.PI_API_TOKEN?.trim() || undefined;
   if ((!['127.0.0.1', '::1', 'localhost'].includes(host) || toolMode !== "read-only") && !token)
@@ -25,7 +28,7 @@ export function serverConfiguration(env: NodeJS.ProcessEnv, base = process.cwd()
     throw new Error("Workspace, agent state and event log locations must be isolated.");
   const chatModel = env.PI_CHAT_MODEL?.trim() || "coat-weave-pi";
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(chatModel)) throw new Error("Invalid PI_CHAT_MODEL.");
-  return { cwd, agentDir, logPath, host, port, token, timeout, toolMode, chatModel };
+  return { cwd, agentDir, logPath, host, port, token, timeout, toolMode, chatModel, retrievalBackend: backend };
 }
 
 export function prepareLocalState(config: ReturnType<typeof serverConfiguration>, env: NodeJS.ProcessEnv): void {

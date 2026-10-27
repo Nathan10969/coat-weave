@@ -31,7 +31,7 @@ class PiHarnessLayoutTests(unittest.TestCase):
             package["dependencies"]["@earendil-works/pi-coding-agent"], "0.86.0"
         )
         source = (PI_ROOT / "src/pi.ts").read_text()
-        self.assertIn("customTools: [patentMilvusTool]", source)
+        self.assertIn('backend === "kg" ? kgTools : [patentMilvusTool]', source)
         self.assertIn('thinkingLevel: "off"', source)
 
     def test_local_secrets_state_and_build_artifacts_are_ignored(self):

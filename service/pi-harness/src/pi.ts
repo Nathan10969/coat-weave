@@ -4,6 +4,7 @@ import type { CompletionSeed, SessionFactory } from "./contracts.js";
 import { appendCompletionSystemPrompt, COATING_SYSTEM_PROMPT } from "./assistant-profile.js";
 import { join } from "node:path";
 import { patentMilvusTool } from "./patent-search/tool.js";
+import { kgTools, loadKgConfig, retrievalBackend } from "./kg-tools.js";
 import { toolNamesForMode, workspaceGuard } from "./tool-policy.js";
 
 export function prepareCompletionSession(session: AgentSession, seed: CompletionSeed): void {
@@ -23,7 +24,9 @@ export function prepareCompletionSession(session: AgentSession, seed: Completion
   }
 }
 
-export function officialPiFactory(cwd: string, agentDir: string, toolMode = "read-only"): SessionFactory {
+export function officialPiFactory(cwd: string, agentDir: string, toolMode = "read-only", backend = retrievalBackend()): SessionFactory {
+  if (backend === "kg") loadKgConfig();
+  const customTools = backend === "kg" ? kgTools : [patentMilvusTool];
   return async seed => {
     const resolvedAgentDir = agentDir;
     const settingsManager = SettingsManager.create(cwd, resolvedAgentDir);
@@ -46,7 +49,7 @@ export function officialPiFactory(cwd: string, agentDir: string, toolMode = "rea
     const result = await createAgentSession({
       cwd, model, modelRuntime,
       agentDir: resolvedAgentDir, settingsManager, resourceLoader,
-      tools: toolNamesForMode(toolMode), customTools: [patentMilvusTool],
+      tools: toolNamesForMode(toolMode, customTools.map(tool => tool.name)), customTools,
       sessionManager: seed ? SessionManager.inMemory(cwd) : SessionManager.create(cwd, join(resolvedAgentDir, "sessions")),
       thinkingLevel: "off",
       // Native /sessions keeps the SDK default persisted SessionManager.

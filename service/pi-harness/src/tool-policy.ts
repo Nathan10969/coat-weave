@@ -2,9 +2,9 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export function toolNamesForMode(mode = "read-only"): string[] {
+export function toolNamesForMode(mode = "read-only", retrievalTools: readonly string[] = ["patent_search"]): string[] {
   if (!["read-only", "workspace-write", "shell"].includes(mode)) throw new Error("Invalid PI_TOOL_MODE.");
-  return ["read", "patent_search", ...(mode !== "read-only" ? ["edit", "write"] : []), ...(mode === "shell" ? ["bash"] : [])];
+  return ["read", ...retrievalTools, ...(mode !== "read-only" ? ["edit", "write"] : []), ...(mode === "shell" ? ["bash"] : [])];
 }
 function inside(root: string, path: string): boolean {
   const value = relative(root, path);

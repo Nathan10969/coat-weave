@@ -2,8 +2,9 @@
 
 Imported from `Nathan10969/coat_weave_harness` commit
 `fe0950db7ef8704248cab7e4866b69fe72661a01` into `service/pi-harness`.
-The runtime source, SDK dependency pins, prompts and retrieval behavior are
-unchanged. Start commands below run from `service/pi-harness`, not the repository
+The initial relocation preserved runtime source and retrieval behavior; the
+subsequent local KG adapter is opt-in and documented below. SDK pins and the
+existing Milvus backend remain unchanged. Start commands below run from `service/pi-harness`, not the repository
 root. This is a separate process from the Python KG API in the parent directory.
 
 A publicly sanitized migration of the service layer: official Pi SDK sessions,
@@ -13,17 +14,18 @@ The upstream Pi monorepo is not vendored. The service consumes a pinned npm SDK.
 
 ```text
 Client -> Pi HTTP adapter :8003 -> configured tool-calling model
-                              -> patent_search -> FastAPI :8002
+                              -> milvus: patent_search -> FastAPI :8002
                                                    -> Milvus
                                                    -> optional embedding/reranker
                                                    -> local Markdown or TOS
+                              -> kg: existing /tools/kg.* HTTP service
+                                     -> original KG retrieval/expansion/aggregation
 ```
 
 The existing [Python KG service](../README.md) is independent of this Pi/Milvus
-service. Pi still registers the existing `patent_search` tool against its own
-configured backend. It does not call the parent service's KG tools, and does not
-inherit that service's retrieval budgets, classification filters or evidence
-expansion behavior merely by sharing a repository. The separate
+service. By default Pi registers the existing `patent_search` tool against its own
+configured backend. Setting `PI_RETRIEVAL_BACKEND=kg` instead registers the five
+existing KG tools through the thin HTTP adapter described below. The separate
 [`patent_coating/` Python CLI](https://github.com/Nathan10969/coat_weave_harness)
 also remains an independent implementation. Training weights, employer datasets
 and model quality measurements are not included or claimed.
@@ -39,7 +41,8 @@ certify the snapshot for production use. Review and test that dependency update
 separately before deploying. Do not use `npm audit fix --force`: its proposed
 SDK replacement changes the supported API.
 
-Node.js 22.19+; Python 3.10+ for the backend. Start from this directory:
+Node.js 22.19+; Python 3.10+ for shared KG schema generation and the backend.
+Start from this directory:
 
 ```bash
 npm ci --ignore-scripts
@@ -76,6 +79,51 @@ provider and can incur charges. The public model alias does not select or switch
 the server's configured provider model.
 
 ## Backend
+
+### Existing KG tools (opt-in)
+
+Configure the already available KG HTTP service; this adapter does not start,
+deploy, rebuild or write to it. For local verification use a local test service
+and an isolated Pi state directory, not a former production endpoint.
+
+```dotenv
+PI_RETRIEVAL_BACKEND=kg
+PI_KG_TOOLS_URL=http://127.0.0.1:18021
+PI_KG_API_TOKEN=
+PI_KG_TIMEOUT_MS=120000
+```
+
+Set `PI_KG_API_TOKEN` to the token configured on that KG service when required.
+`PI_KG_TOOLS_URL` is the service base URL, not the Python API's tool-proxy URL.
+Remote services require HTTPS. KG failures never switch silently to Milvus.
+
+| Pi tool | Existing endpoint |
+|---|---|
+| `kg_hybrid_search` | `/tools/kg.hybrid_search` |
+| `kg_expand_hyperedge_multihop` | `/tools/kg.expand_hyperedge_multihop` |
+| `kg_sql_aggregate` | `/tools/kg.sql_aggregate` |
+| `kg_lookup_vocabulary` | `/tools/kg.lookup_vocabulary` |
+| `kg_doc_field_scan` | `/tools/kg.doc_field_scan` |
+
+Schema generation calls the parent service's `kg_contract.openai_tool_parameters`
+and reads its classification registry. It runs locally during check/build/test,
+not during each model call. Generated schemas are ignored source assets and are
+copied into the compiled build. No second material/category vocabulary is added.
+
+Search uses the shared 100-candidate/50-result policy; quantity parameters remain
+hidden from the model. Expansion requests use `evidence_mode=full` and accept up
+to the shared 30-object limit per call. No evidence byte cap, summarizer or hidden
+retry is added. Query, filters, pagination, source IDs, full evidence, partial
+results, unsupported receipts and exact/adjacent envelopes are forwarded intact.
+Existing normalization and retrieval execute on the original KG server.
+
+Pi chooses calls and object IDs. This adapter does not duplicate the Python
+router, its session scope management, automatic expansion selection or answer
+planning. A tool connection is not proof that a real model will choose the right
+filters or return a scientifically correct answer. Native events and the existing
+11-field metadata logs retain the KG tool names and call IDs.
+
+### Independent Milvus backend (default)
 
 ```bash
 python -m venv backend/.venv
@@ -130,9 +178,12 @@ Map tool starts/ends to observable status labels instead.
 
 | `PI_TOOL_MODE` | Registered tools | Boundary |
 |---|---|---|
-| `read-only` (default) | `read`, `patent_search` | Workspace files and configured backend |
+| `read-only` (default) | `read` plus selected retrieval tools | Workspace files and configured backend |
 | `workspace-write` | Above plus `edit`, `write` | Writes restricted to workspace `outputs/` |
 | `shell` | Above plus `bash` | Privileged; shell is NOT confined by path guards |
+
+Selected retrieval tools are `patent_search` in Milvus mode or the five `kg_*`
+tools in KG mode, never an automatic mixture of both backends.
 
 Privileged modes and non-loopback binding require a 24-256 character API token.
 File tools reject hidden paths, credential files, traversal and symlink escapes.
@@ -168,6 +219,7 @@ must stay private. Rotate logs externally; retention is not automatic.
 npm run check
 npm run build
 npm test
+node scripts/smoke.mjs kg
 PYTHONPATH=backend/src backend/.venv/bin/python -B -m unittest discover -s backend/tests -v
 ```
 
@@ -177,3 +229,5 @@ transport, policy and pagination, not scientific answer quality. See
 [historical upstream publication verification](docs/PUBLICATION_CHECKS.md),
 [relocation verification](docs/RELOCATION_20261027.md) and
 [upstream attribution](THIRD_PARTY_NOTICES.md).
+Local KG adapter checks and their boundaries are recorded in
+[KG_ADAPTER_20261027.md](docs/KG_ADAPTER_20261027.md).

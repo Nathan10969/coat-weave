@@ -7,9 +7,10 @@
   "engines": { "node": ">=22.19.0" },
   "scripts": {
     "prepare-deps": "node scripts/prepare-deps.mjs",
-    "precheck": "npm run prepare-deps",
-    "prebuild": "npm run prepare-deps",
-    "pretest": "npm run prepare-deps",
+    "prepare-kg-tools": "python3 scripts/export-kg-tools.py",
+    "precheck": "npm run prepare-deps && npm run prepare-kg-tools",
+    "prebuild": "npm run prepare-deps && npm run prepare-kg-tools",
+    "pretest": "npm run prepare-deps && npm run prepare-kg-tools",
     "check": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "start": "node --env-file-if-exists=.env dist/main.js",

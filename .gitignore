@@ -24,6 +24,7 @@ logs/
 /service/pi-harness/node_modules/
 /service/pi-harness/dist/
 /service/pi-harness/.local/
+/service/pi-harness/src/kg-tools-schema.json
 *.egg-info/
 
 # Large source and generated artifacts

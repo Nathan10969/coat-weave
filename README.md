@@ -49,7 +49,7 @@ CoatWeave 面向涂料与材料配方研究，包含专利知识提取、知识�
 | [`service/api/`](service/api/) | HTTP 接口、鉴权、会话工作区与回答编排 | [`main.py`](service/api/main.py)、[`app.py`](service/api/app.py) |
 | [`service/core/`](service/core/) | 问题分类、工具路由、证据包、会话记忆与回答组织 | [`query_classification.py`](service/core/query_classification.py)、[`routing.py`](service/core/routing.py) |
 | [`service/kg_tools/`](service/kg_tools/) | 只读知识工具服务 | [`kg_expand_http_service.py`](service/kg_tools/kg_expand_http_service.py) |
-| [`service/pi-harness/`](service/pi-harness/) | 独立 Pi SDK 会话、HTTP/SSE 与 Milvus 专利工具服务；尚未接通本仓库 KG 工具 | [`Pi 服务说明`](service/pi-harness/README.md) |
+| [`service/pi-harness/`](service/pi-harness/) | 独立 Pi SDK 会话与 HTTP/SSE；默认 Milvus，可显式选择调用既有 KG 工具 | [`Pi 服务说明`](service/pi-harness/README.md) |
 | [`service/storage/`](service/storage/) | 服务侧会话状态与持久化 | [`repository.py`](service/storage/repository.py) |
 | [`service/systemd/`](service/systemd/) | A100 部署服务单元 | [`service/README.md`](service/README.md) |
 
@@ -190,7 +190,7 @@ curl http://127.0.0.1:8031/api/v1/coating/chat \
 | 项目 | 主要用途 | 关系 |
 | --- | --- | --- |
 | **CoatWeave（本仓库）** | 从专利证据构建 KG、准备超边检索对象，再通过 API 组织检索问答 | 包含提取、索引作业与独立服务模块 |
-| **[Pi Harness 服务副本](service/pi-harness/README.md)** | Pi SDK 会话与工具循环，调用独立 Milvus 后端 | 从 Harness 的已脱敏版本导入；与 Python KG API 分别启动，暂未接通其 KG 工具 |
+| **[Pi Harness 服务](service/pi-harness/README.md)** | Pi SDK 会话与工具循环；可选 Milvus 或既有 KG HTTP 工具 | 与 Python KG API 分别启动；KG 适配复用原服务逻辑，不代表自动部署或生产验收 |
 | **[coat_weave_harness](https://github.com/Nathan10969/coat_weave_harness)** | 独立的专利检索与全文查证：按章节切片、嵌入召回、重排，再用工具阅读全文并给出行号引用 | 其 `main` 分支不调用或依赖本仓库的 `service/`，也不是本仓库的服务启动入口 |
 
 本快照未附带原始 PDF、ZIP 数据包、提取语料、JSONL 数据集、数据库内容、向量索引、运行状态、日志、缓存、虚拟环境、备份或含密钥的 `.env` 文件。模型服务、部署端点、凭据和数据路径需要自行准备。
