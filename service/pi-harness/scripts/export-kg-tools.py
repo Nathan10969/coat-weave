@@ -14,7 +14,7 @@ from query_classification import load_registry
 
 DESCRIPTIONS = {
     "kg.lookup_vocabulary": "Look up material names, aliases, canonical IDs and classification definitions in the existing KG vocabulary. Returns vocabulary candidates, not patent evidence.",
-    "kg.hybrid_search": "Search the existing KG using the user's original question and explicitly requested filters. Returns ranked candidates, exact/adjacent evidence boundaries and filter receipts. Expand selected object IDs before answering sample-level facts; do not expand candidate-only listings.",
+    "kg.hybrid_search": "Search the existing KG while preserving the user's question and explicitly requested filters. You may append English translations of concepts explicitly present in the question for multilingual retrieval. Translations are search-text aids, not additional hard filters; do not invent materials, tests or application restrictions. Returns ranked candidates, exact/adjacent evidence boundaries and filter receipts. Expand selected object IDs before answering sample-level facts; do not expand candidate-only listings.",
     "kg.expand_hyperedge_multihop": "Expand selected source-qualified object IDs from KG retrieval into full sample-associated facts, evidence and provenance. Partial failures remain explicit. "
         f"Expand at most {retrieval_policy()['expand_top_k']} object IDs per call.",
     "kg.sql_aggregate": "Run the existing KG aggregation for counts, distinct values, groups and distributions. Use target=doc_id for patent counts and retain all user filters. Do not infer corpus totals from search top-k.",

@@ -11,6 +11,9 @@ test("KG schemas reuse all five shared tools, classification axes and service bu
   for (const key of ["application_domains", "coating_functions", "coating_layers", "supply_forms", "film_processes"])
     assert.ok(schema.properties.filters.properties[key].items.enum.length);
   assert.ok(kgCatalog.classification_registry_version);
+  const description = kgCatalog.tools.find(tool => tool.name === "kg_hybrid_search")!.description;
+  assert.match(description, /English translations/);
+  assert.match(description, /not additional hard filters/);
   assert.equal(retrievalBackend({}), "milvus");
   assert.equal(retrievalBackend({ PI_RETRIEVAL_BACKEND: "kg" }), "kg");
   assert.throws(() => retrievalBackend({ PI_RETRIEVAL_BACKEND: "automatic" }), /PI_RETRIEVAL_BACKEND/);
@@ -18,6 +21,31 @@ test("KG schemas reuse all five shared tools, classification axes and service bu
     assert.throws(() => loadKgConfig({ PI_KG_TOOLS_URL: url }));
   assert.throws(() => loadKgConfig({ PI_KG_TIMEOUT_MS: "0" }));
   assert.throws(() => loadKgConfig({ PI_KG_API_TOKEN: "bad\nheader" }));
+});
+
+test("only recognized validation reasons are exposed on HTTP 400; other errors stay private", async () => {
+  let status = 400;
+  let error = "query must be a non-empty string";
+  const server = createServer((_request, response) => {
+    response.writeHead(status, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ tool: "kg.hybrid_search", status: "error", error }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const config = loadKgConfig({ PI_KG_TOOLS_URL: `http://127.0.0.1:${address.port}` });
+  try {
+    await assert.rejects(queryKgTool("kg_hybrid_search", { query: "" }, undefined, config), /query must be a non-empty string/);
+    error = "PRIVATE_BACKEND_DATA";
+    await assert.rejects(queryKgTool("kg_hybrid_search", { query: "" }, undefined, config), value =>
+      value instanceof Error && !value.message.includes(error));
+    status = 500;
+    error = "query must be a non-empty string";
+    await assert.rejects(queryKgTool("kg_hybrid_search", { query: "" }, undefined, config), value =>
+      value instanceof Error && value.message.includes("500") && !value.message.includes(error));
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
 
 test("KG adapter forwards original filters, source IDs and receipts with full evidence", async () => {

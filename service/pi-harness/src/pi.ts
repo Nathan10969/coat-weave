@@ -4,7 +4,7 @@ import type { CompletionSeed, SessionFactory } from "./contracts.js";
 import { appendCompletionSystemPrompt, COATING_SYSTEM_PROMPT } from "./assistant-profile.js";
 import { join } from "node:path";
 import { patentMilvusTool } from "./patent-search/tool.js";
-import { kgTools, loadKgConfig, retrievalBackend } from "./kg-tools.js";
+import { loadKgConfig, retrievalBackend } from "./retrieval-config.js";
 import { toolNamesForMode, workspaceGuard } from "./tool-policy.js";
 
 export function prepareCompletionSession(session: AgentSession, seed: CompletionSeed): void {
@@ -26,8 +26,8 @@ export function prepareCompletionSession(session: AgentSession, seed: Completion
 
 export function officialPiFactory(cwd: string, agentDir: string, toolMode = "read-only", backend = retrievalBackend()): SessionFactory {
   if (backend === "kg") loadKgConfig();
-  const customTools = backend === "kg" ? kgTools : [patentMilvusTool];
   return async seed => {
+    const customTools = backend === "kg" ? (await import("./kg-tools.js")).kgTools : [patentMilvusTool];
     const resolvedAgentDir = agentDir;
     const settingsManager = SettingsManager.create(cwd, resolvedAgentDir);
     const resourceLoader = new DefaultResourceLoader({

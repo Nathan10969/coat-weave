@@ -41,8 +41,10 @@ certify the snapshot for production use. Review and test that dependency update
 separately before deploying. Do not use `npm audit fix --force`: its proposed
 SDK replacement changes the supported API.
 
-Node.js 22.19+; Python 3.10+ for shared KG schema generation and the backend.
-Start from this directory:
+Node.js 22.19+. The default Milvus adapter can build and start independently,
+without Python or the parent KG source. Python 3.10+ and the full repository are
+needed only for KG schema export, the Python backend and the full test suite.
+Start from this directory; `npm test` below assumes the full repository:
 
 ```bash
 npm ci --ignore-scripts
@@ -96,6 +98,9 @@ PI_KG_TIMEOUT_MS=120000
 Set `PI_KG_API_TOKEN` to the token configured on that KG service when required.
 `PI_KG_TOOLS_URL` is the service base URL, not the Python API's tool-proxy URL.
 Remote services require HTTPS. KG failures never switch silently to Milvus.
+Build KG mode with `npm run build:kg` before starting it. Repeat this command
+after changing the shared KG contract or classification registry. Ordinary
+`npm run build` remains a Node-only build and does not regenerate KG schemas.
 
 | Pi tool | Existing endpoint |
 |---|---|
@@ -106,8 +111,9 @@ Remote services require HTTPS. KG failures never switch silently to Milvus.
 | `kg_doc_field_scan` | `/tools/kg.doc_field_scan` |
 
 Schema generation calls the parent service's `kg_contract.openai_tool_parameters`
-and reads its classification registry. It runs locally during check/build/test,
-not during each model call. Generated schemas are ignored source assets and are
+and reads its classification registry. It runs during `build:kg`,
+`prepare-kg-tools` or the full test suite, not during model calls or ordinary
+Milvus check/build/start. Generated schemas are ignored source assets and are
 copied into the compiled build. No second material/category vocabulary is added.
 
 Search uses the shared 100-candidate/50-result policy; quantity parameters remain
@@ -116,6 +122,11 @@ to the shared 30-object limit per call. No evidence byte cap, summarizer or hidd
 retry is added. Query, filters, pagination, source IDs, full evidence, partial
 results, unsupported receipts and exact/adjacent envelopes are forwarded intact.
 Existing normalization and retrieval execute on the original KG server.
+For multilingual retrieval, the model may append English translations of
+concepts already present in the question. These are search-text aids, not extra
+hard filters. No Chinese keyword rules or translation-model call are added.
+HTTP 400 exposes only the existing service's four fixed input-validation reasons;
+arbitrary backend messages and all HTTP 500 bodies remain hidden.
 
 Pi chooses calls and object IDs. This adapter does not duplicate the Python
 router, its session scope management, automatic expansion selection or answer
@@ -217,7 +228,7 @@ must stay private. Rotate logs externally; retention is not automatic.
 
 ```bash
 npm run check
-npm run build
+npm run build:kg
 npm test
 node scripts/smoke.mjs kg
 PYTHONPATH=backend/src backend/.venv/bin/python -B -m unittest discover -s backend/tests -v
@@ -231,3 +242,5 @@ transport, policy and pagination, not scientific answer quality. See
 [upstream attribution](THIRD_PARTY_NOTICES.md).
 Local KG adapter checks and their boundaries are recorded in
 [KG_ADAPTER_20261027.md](docs/KG_ADAPTER_20261027.md).
+The three review follow-ups and merge verification are recorded separately in
+[KG_REVIEW_20261027.md](docs/KG_REVIEW_20261027.md).

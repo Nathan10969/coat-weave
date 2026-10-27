@@ -67,7 +67,7 @@ From `service/pi-harness`, after installing the documented dependencies:
 
 ```bash
 npm run check
-npm run build
+npm run build:kg
 npm test
 node scripts/smoke.mjs kg
 node scripts/smoke.mjs milvus
@@ -91,4 +91,6 @@ integration test needs Node/tsx and the generated shared-schema asset.
 - The previously documented undici dependency audit issue remains unresolved;
   offline functional tests are not production security approval.
 - No production service, systemd unit or reverse proxy was changed or restarted.
-- This change was tested locally, not published or deployed.
+- This initial report describes local-only verification at `868bed7`, before
+  publication approval. Subsequent review and merge status are tracked separately
+  in `KG_REVIEW_20261027.md`; no production deployment is implied by a Git merge.

@@ -1,7 +1,7 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { toolNamesForMode } from "./tool-policy.js";
-import { loadKgConfig, retrievalBackend } from "./kg-tools.js";
+import { loadKgConfig, retrievalBackend } from "./retrieval-config.js";
 
 export function serverConfiguration(env: NodeJS.ProcessEnv, base = process.cwd()) {
   const toolMode = env.PI_TOOL_MODE || "read-only";
