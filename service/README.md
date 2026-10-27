@@ -4,6 +4,12 @@ This directory provides a FastAPI question-answering service and a separate
 read-only KG tools server. The API coordinates retrieval, document scope, model
 calls and conversation memory. Clients provide their own user interface.
 
+The independent [Pi Harness service](pi-harness/README.md) is also included under
+`service/pi-harness`. It runs as a separate Node.js process and retains its own
+FastAPI/Milvus patent backend. It is not the runtime used by the Python API below,
+and has not been connected to this service's KG tools. See its own setup, privacy
+boundaries and tests before use; copying the source is not a production rollout.
+
 ## Local setup
 
 From the repository root, with Python 3.10 or newer:

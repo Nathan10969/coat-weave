@@ -20,6 +20,12 @@ logs/
 *.log
 *.sqlite*
 
+# Independently deployed Pi service dependencies and private SDK state
+/service/pi-harness/node_modules/
+/service/pi-harness/dist/
+/service/pi-harness/.local/
+*.egg-info/
+
 # Large source and generated artifacts
 runs/
 data/

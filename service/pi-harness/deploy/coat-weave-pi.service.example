@@ -1,0 +1,27 @@
+[Unit]
+Description=CoatWeave Pi Harness
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coatweave
+Group=coatweave
+WorkingDirectory=/opt/coat-weave/service/pi-harness
+EnvironmentFile=/etc/coat-weave/pi.env
+Environment=PI_PROJECT_CWD=/var/lib/coatweave/workspace
+Environment=PI_AGENT_DIR=/var/lib/coatweave/agent
+Environment=PI_EVENT_LOG_PATH=/var/lib/coatweave/events.jsonl
+ExecStart=/usr/bin/node /opt/coat-weave/service/pi-harness/dist/main.js
+Restart=on-failure
+UMask=0077
+StateDirectory=coatweave
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/coatweave
+
+[Install]
+WantedBy=multi-user.target
