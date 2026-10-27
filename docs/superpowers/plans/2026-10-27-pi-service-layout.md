@@ -11,7 +11,12 @@
 - [x] Import the tracked Pi service, license notices and historical verification notes; update documentation paths, deployment example and ignore patterns.
 - [x] Provide the existing offline CI workflow as `service/pi-harness/docs/ci-example.yml` with relocated paths; do not enable new repository automation in this source-only move.
 - [x] Run layout checks, TypeScript checking, build, SDK tests, backend tests and compiled-process smoke. Compare runtime source bytes against the pinned upstream commit. Record the newly reported dependency audit failure without changing the SDK or lockfile.
-- [ ] Scan the staged release, commit, push and verify the GitHub revision and public visibility.
+- [x] Scan the staged release, commit, push and verify the GitHub revision and public visibility.
+
+Published source commit: `2285e3fea3a22b8d648bb28bcc600e963bed3964` (Jony).
+GitHub `main` and `feat/20261027-pi-service-layout` were verified at that revision;
+`backup/20261027-before-pi-service` preserves baseline `2660ffe`. The Harness
+repository was independently verified public. No production service was restarted.
 
 ## Acceptance
 
